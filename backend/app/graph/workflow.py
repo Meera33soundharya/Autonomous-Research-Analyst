@@ -2,111 +2,276 @@ from langgraph.graph import StateGraph, START, END
 
 from app.graph.state import ResearchState
 
-from app.agents.planner import create_research_plan
 from app.agents.searcher import run_search
 from app.agents.researcher import analyze_sources
 from app.agents.citation_checker import check_citations
 from app.agents.writer import generate_report
 
+from app.services.report_service import (
+    save_markdown,
+    save_pdf
+)
+
+from app.agents.planner import create_research_plan
+
+
+# ============================================================
+# 1. PLANNER AGENT
+# ============================================================
 
 def planner_node(state: ResearchState):
+    
+    print("\n=== Planner Agent ===")
+
     topic = state["topic"]
 
-    plan = create_research_plan(topic)
+    print(
+        f"Planning research for topic: {topic}"
+    )
+
+    questions = create_research_plan(topic)
+
+    print(
+        f"Generated {len(questions)} research questions."
+    )
+
+    for question in questions:
+        print(f"- {question}")
 
     return {
-        "research_plan": plan
+        "research_questions": questions
     }
 
 
+# ============================================================
+# 2. SEARCHER AGENT
+# ============================================================
+
 def searcher_node(state: ResearchState):
 
-    questions = [
-        "What are the major healthcare applications of AI, such as diagnosis, treatment planning, and drug discovery?",
-        "How effective are AI systems in improving clinical outcomes, accuracy, or efficiency?",
-        "What are the main ethical, legal, and privacy concerns associated with AI in healthcare?",
-        "What barriers limit the adoption of AI in clinical and administrative settings?",
-        "How can AI systems be validated, regulated, and monitored to ensure safety and reliability?"
-    ]
+    print("\n=== Searcher Agent ===")
+
+    questions = state["research_questions"]
 
     results = run_search(questions)
 
+    print(
+        f"Collected {len(results)} web sources."
+    )
+
     return {
-        "questions": questions,
         "search_results": results
     }
 
 
+# ============================================================
+# 3. RESEARCHER AGENT
+# ============================================================
+
 def researcher_node(state: ResearchState):
 
-    questions = state["questions"]
+    print("\n=== Researcher Agent ===")
+
+    questions = state["research_questions"]
     sources = state["search_results"]
 
-    all_evidence = []
+    evidence = []
 
     for question in questions:
 
-        evidence = analyze_sources(
+        print(
+            f"Analyzing: {question}"
+        )
+
+        result = analyze_sources(
             question,
             sources
         )
 
-        all_evidence.append(
-            f"""
-Research Question:
-{question}
+        evidence.append(result)
 
-Evidence:
-{evidence}
-"""
-        )
-
-    combined_evidence = "\n\n".join(all_evidence)
+    print(
+        f"Evidence groups created: {len(evidence)}"
+    )
 
     return {
-        "evidence": combined_evidence
+        "evidence": evidence
     }
 
 
-def citation_node(state: ResearchState):
+# ============================================================
+# 4. CITATION CHECKER AGENT
+# ============================================================
+
+def citation_checker_node(state: ResearchState):
+
+    print("\n=== Citation Checker ===")
 
     evidence = state["evidence"]
 
-    verified = check_citations(evidence)
+    verified = check_citations(
+        evidence
+    )
+
+    supported = 0
+    unsupported = 0
+
+    for item in verified:
+
+        for finding in item.get(
+            "findings",
+            []
+        ):
+
+            if finding.get(
+                "status"
+            ) == "SUPPORTED":
+
+                supported += 1
+
+            else:
+
+                unsupported += 1
+
+    print(
+        f"Supported: {supported}"
+    )
+
+    print(
+        f"Unsupported: {unsupported}"
+    )
 
     return {
         "verified_evidence": verified
     }
 
 
+# ============================================================
+# 5. WRITER AGENT
+# ============================================================
+
 def writer_node(state: ResearchState):
 
-    topic = state["topic"]
-    verified_evidence = state["verified_evidence"]
+    print("\n=== Writer Agent ===")
 
+    topic = state["topic"]
+
+    verified_evidence = (
+        state["verified_evidence"]
+    )
+
+    # Generate final report
     report = generate_report(
         topic,
         verified_evidence
     )
 
+    # Save Markdown report
+    markdown_file = save_markdown(
+        topic,
+        report
+    )
+
+    # Save PDF report
+    pdf_file = save_pdf(
+        topic,
+        report
+    )
+
+    print(
+        "\n=== Report Generated ==="
+    )
+
+    print(
+        "Markdown:",
+        markdown_file
+    )
+
+    print(
+        "PDF:",
+        pdf_file
+    )
+
     return {
-        "report": report
+        "report": report,
+        "markdown_file": markdown_file,
+        "pdf_file": pdf_file
     }
 
 
-builder = StateGraph(ResearchState)
+# ============================================================
+# LANGGRAPH WORKFLOW
+# ============================================================
 
-builder.add_node("planner", planner_node)
-builder.add_node("searcher", searcher_node)
-builder.add_node("researcher", researcher_node)
-builder.add_node("citation_checker", citation_node)
-builder.add_node("writer", writer_node)
+workflow = StateGraph(
+    ResearchState
+)
 
-builder.add_edge(START, "planner")
-builder.add_edge("planner", "searcher")
-builder.add_edge("searcher", "researcher")
-builder.add_edge("researcher", "citation_checker")
-builder.add_edge("citation_checker", "writer")
-builder.add_edge("writer", END)
 
-research_graph = builder.compile()
+# Add agents
+workflow.add_node(
+    "planner",
+    planner_node
+)
+
+workflow.add_node(
+    "searcher",
+    searcher_node
+)
+
+workflow.add_node(
+    "researcher",
+    researcher_node
+)
+
+workflow.add_node(
+    "citation_checker",
+    citation_checker_node
+)
+
+workflow.add_node(
+    "writer",
+    writer_node
+)
+
+
+# ============================================================
+# WORKFLOW CONNECTIONS
+# ============================================================
+
+workflow.add_edge(
+    START,
+    "planner"
+)
+
+workflow.add_edge(
+    "planner",
+    "searcher"
+)
+
+workflow.add_edge(
+    "searcher",
+    "researcher"
+)
+
+workflow.add_edge(
+    "researcher",
+    "citation_checker"
+)
+
+workflow.add_edge(
+    "citation_checker",
+    "writer"
+)
+
+workflow.add_edge(
+    "writer",
+    END
+)
+
+
+# ============================================================
+# COMPILE WORKFLOW
+# ============================================================
+
+research_graph = workflow.compile()

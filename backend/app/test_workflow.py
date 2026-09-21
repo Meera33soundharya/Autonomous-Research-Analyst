@@ -1,29 +1,45 @@
 from app.graph.workflow import research_graph
 
 
-topic = "Artificial Intelligence in Healthcare"
-
-
 result = research_graph.invoke({
-    "topic": topic
+    "topic": "Artificial Intelligence in Healthcare"
 })
 
 
-print("\n===== RESEARCH PLAN =====\n")
-print(result.get("research_plan"))
+print("\n================================")
+print("AUTONOMOUS RESEARCH ANALYST")
+print("================================")
 
+print("\nTOPIC:")
+print(result["topic"])
 
-print("\n===== SEARCH QUESTIONS =====\n")
-print(result.get("questions"))
+print("\nRESEARCH QUESTIONS:")
+for question in result["research_questions"]:
+    print("-", question)
 
+print("\nVERIFIED EVIDENCE:")
 
-print("\n===== EVIDENCE =====\n")
-print(result.get("evidence"))
+for item in result["verified_evidence"]:
 
+    print("\nQuestion:")
+    print(item["question"])
 
-print("\n===== VERIFIED EVIDENCE =====\n")
-print(result.get("verified_evidence"))
+    for finding in item["findings"]:
 
+        print("\nClaim:")
+        print(finding["claim"])
 
-print("\n===== FINAL RESEARCH REPORT =====\n")
-print(result.get("report"))
+        print("Source:")
+        print(finding["source"])
+
+        print("URL:")
+        print(finding["url"])
+
+        print("Status:")
+        print(finding["status"])
+
+print("\n================================")
+print("FINAL RESEARCH REPORT")
+print("================================")
+
+print(result["report"])

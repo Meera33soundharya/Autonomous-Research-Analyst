@@ -1,30 +1,35 @@
-import os
-from dotenv import load_dotenv
-from openai import OpenAI
+from ollama import chat
 
-load_dotenv()
 
-api_key = os.getenv("OPENROUTER_API_KEY")
-model = os.getenv("OPENROUTER_MODEL", "openrouter/free")
+MODEL = "qwen3:8b"
 
-if not api_key:
-    raise RuntimeError("OPENROUTER_API_KEY is not set")
-
-client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=api_key,
-)
 
 def ask_llm(prompt: str) -> str:
-    response = client.chat.completions.create(
-        model=model,
+
+    response = chat(
+        model=MODEL,
         messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a reliable research AI agent. "
+                    "Follow the user's instructions exactly. "
+                    "Return the requested research content."
+                )
+            },
             {
                 "role": "user",
                 "content": prompt
             }
         ],
-        temperature=0.2,
+        options={
+            "temperature": 0.2
+        }
     )
 
-    return response.choices[0].message.content or ""
+    content = response["message"]["content"]
+
+    if not content:
+        return "No response generated."
+
+    return content.strip()

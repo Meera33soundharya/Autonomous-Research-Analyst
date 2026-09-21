@@ -1,14 +1,21 @@
 from app.services.search_service import search_web
 
 
-def run_search(questions: list[str]):
-    results = []
+def run_search(questions: list[str]) -> list[dict]:
+
+    all_results = []
 
     for question in questions:
-        print(f"\nSearching: {question}")
 
-        result = search_web(question)
+        results = search_web(question)
 
-        results.extend(result)
+        for result in results:
 
-    return results
+            all_results.append({
+                "question": question,
+                "title": result.get("title", ""),
+                "url": result.get("url", ""),
+                "content": result.get("content", "")
+            })
+
+    return all_results

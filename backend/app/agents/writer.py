@@ -1,44 +1,115 @@
-from app.services.llm_service import ask_llm
+def generate_report(topic: str, verified_evidence: list[dict]) -> str:
+    
+    report = []
 
+    report.append(f"# {topic}")
+    report.append("")
+    report.append("## 1. Executive Summary")
+    report.append("")
+    report.append(
+        "This report summarizes the research evidence collected "
+        "and verified by the autonomous research workflow."
+    )
+    report.append("")
 
-def generate_report(topic: str, verified_evidence: str) -> str:
-    prompt = f"""
-You are a professional research report writer.
+    report.append("## 2. Introduction")
+    report.append("")
+    report.append(
+        f"The research focuses on {topic}. "
+        "The system collected sources, extracted claims, "
+        "and checked whether the claims were supported by the available evidence."
+    )
+    report.append("")
 
-Research Topic:
-{topic}
+    report.append("## 3. Key Findings")
+    report.append("")
 
-Verified Evidence:
-{verified_evidence}
+    for item in verified_evidence:
 
-Write a professional research report.
+        report.append(
+            f"### {item.get('question', '')}"
+        )
+        report.append("")
 
-Use this structure:
+        for finding in item.get("findings", []):
 
-# {topic}
+            report.append(
+                f"- **Claim:** {finding.get('claim', '')}"
+            )
 
-## 1. Executive Summary
+            report.append(
+                f"- **Source:** {finding.get('source', '')}"
+            )
 
-## 2. Introduction
+            report.append(
+                f"- **Status:** {finding.get('status', '')}"
+            )
 
-## 3. Key Findings
+            report.append("")
 
-## 4. Evidence Analysis
+    report.append("## 4. Evidence Analysis")
+    report.append("")
 
-## 5. Challenges and Limitations
+    supported_count = 0
+    unsupported_count = 0
 
-## 6. Future Opportunities
+    for item in verified_evidence:
 
-## 7. Conclusion
+        for finding in item.get("findings", []):
 
-## References
+            if finding.get("status") == "SUPPORTED":
+                supported_count += 1
+            else:
+                unsupported_count += 1
 
-Rules:
-- Use only the verified evidence provided.
-- Do not invent facts.
-- Keep the writing clear and professional.
-- Clearly distinguish evidence from assumptions.
-- Include source names and URLs when they are available.
-"""
+    report.append(
+        f"Supported findings: {supported_count}"
+    )
 
-    return ask_llm(prompt)
+    report.append(
+        f"Unsupported findings: {unsupported_count}"
+    )
+
+    report.append("")
+
+    report.append("## 5. Challenges and Limitations")
+    report.append("")
+    report.append(
+        "The report is limited to the sources collected by the research workflow. "
+        "Claims without sufficient source information are not treated as verified."
+    )
+    report.append("")
+
+    report.append("## 6. Future Opportunities")
+    report.append("")
+    report.append(
+        "Future versions can improve source ranking, evidence extraction, "
+        "citation verification, and report generation using stronger language models."
+    )
+    report.append("")
+
+    report.append("## 7. Conclusion")
+    report.append("")
+    report.append(
+        "The multi-agent workflow demonstrates how research questions, "
+        "web sources, evidence extraction, citation verification, "
+        "and report generation can be connected into an automated pipeline."
+    )
+    report.append("")
+
+    report.append("## References")
+    report.append("")
+
+    for item in verified_evidence:
+
+        for finding in item.get("findings", []):
+
+            source = finding.get("source", "")
+            url = finding.get("url", "")
+
+            if source and url:
+                report.append(
+                    f"- {source}: {url}"
+                )
+
+    return "\n".join(report)
