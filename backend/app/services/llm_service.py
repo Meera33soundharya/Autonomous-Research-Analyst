@@ -1,20 +1,55 @@
-from ollama import chat
+import os
+
+from dotenv import load_dotenv
+from openai import OpenAI
 
 
-MODEL = "qwen3:8b"
+# Load .env
+load_dotenv()
 
+
+# ============================================================
+# OPENROUTER CONFIGURATION
+# ============================================================
+
+api_key = os.getenv(
+    "OPENROUTER_API_KEY"
+)
+
+model = os.getenv(
+    "OPENROUTER_MODEL",
+    "openai/gpt-oss-20b:free"
+)
+
+
+if not api_key:
+    raise RuntimeError(
+        "OPENROUTER_API_KEY is not set in .env"
+    )
+
+
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=api_key
+)
+
+
+# ============================================================
+# LLM SERVICE
+# ============================================================
 
 def ask_llm(prompt: str) -> str:
 
-    response = chat(
-        model=MODEL,
+    response = client.chat.completions.create(
+        model=model,
         messages=[
             {
                 "role": "system",
                 "content": (
                     "You are a reliable research AI agent. "
-                    "Follow the user's instructions exactly. "
-                    "Return the requested research content."
+                    "Generate accurate, topic-specific research "
+                    "content. Follow the requested format exactly. "
+                    "Do not invent sources or facts."
                 )
             },
             {
@@ -22,12 +57,10 @@ def ask_llm(prompt: str) -> str:
                 "content": prompt
             }
         ],
-        options={
-            "temperature": 0.2
-        }
+        temperature=0.2
     )
 
-    content = response["message"]["content"]
+    content = response.choices[0].message.content
 
     if not content:
         return "No response generated."

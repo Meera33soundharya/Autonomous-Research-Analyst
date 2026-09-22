@@ -1,562 +1,168 @@
-import re
+from app.services.llm_service import ask_llm
 
-
-# ============================================================
-# TEXT CLEANING
-# ============================================================
 
 def clean_text(text: str) -> str:
-    """Clean scraped webpage text without changing normal words."""
-
+    """Clean common webpage extraction problems."""
     if not text:
         return ""
 
-    # --------------------------------------------------------
-    # Remove Markdown images
-    # --------------------------------------------------------
-
-    text = re.sub(
-        r'!\[\[.*?\]\]',
-        ' ',
-        text,
-        flags=re.DOTALL
-    )
-
-    text = re.sub(
-        r'!\[.*?\]\(.*?\)',
-        ' ',
-        text,
-        flags=re.DOTALL
-    )
-
-    # --------------------------------------------------------
-    # Convert Markdown links to visible text
-    # Example:
-    # [Quantum Computing](https://example.com)
-    # becomes:
-    # Quantum Computing
-    # --------------------------------------------------------
-
-    text = re.sub(
-        r'\[([^\]]+)\]\([^)]+\)',
-        r'\1',
-        text
-    )
-
-    # --------------------------------------------------------
-    # Remove URLs
-    # --------------------------------------------------------
-
-    text = re.sub(
-        r'https?://\S+',
-        ' ',
-        text,
-        flags=re.IGNORECASE
-    )
-
-    # --------------------------------------------------------
-    # Remove broken URL/reference fragments
-    # --------------------------------------------------------
-
-    text = re.sub(
-        r'\b[\w-]+/\d+-\d+/fulltext\)?',
-        ' ',
-        text,
-        flags=re.IGNORECASE
-    )
-
-    text = re.sub(
-        r'\b\d{3,}-\d+/fulltext\)?',
-        ' ',
-        text,
-        flags=re.IGNORECASE
-    )
-
-    # --------------------------------------------------------
-    # Remove Markdown headings
-    # --------------------------------------------------------
-
-    text = re.sub(
-        r'#{1,6}\s*',
-        ' ',
-        text
-    )
-
-    # --------------------------------------------------------
-    # Remove common webpage noise
-    # --------------------------------------------------------
-
-    noise_patterns = [
-        r'Featured Image',
-        r'Quote Icon',
-        r'Company Logo',
-        r'Globe Newswire',
-        r'Key takeaways',
-        r'Read more',
-        r'\d+\s*min read',
-        r'In Conclusion',
-        r'Cookie Policy',
-        r'Privacy Policy',
-        r'Terms of Use',
-        r'Subscribe',
-        r'Sign Up',
-        r'Login',
-    ]
-
-    for pattern in noise_patterns:
-        text = re.sub(
-            pattern,
-            ' ',
-            text,
-            flags=re.IGNORECASE
-        )
-
-    # --------------------------------------------------------
-    # Fix only known scraping errors
-    # --------------------------------------------------------
-
     replacements = {
-        "of fer": "offer",
-        "of ten": "often",
-        "the mselves": "themselves",
-        "the ir": "their",
-        "canbe": "can be",
-        "anddeployment": "and deployment",
-        "poweredby": "powered by",
-        "real-timemonitoring": "real-time monitoring",
-        "waysto": "ways to",
-        "issuesof": "issues of",
-        "essentialto": "essential to",
-        "systemis": "system is",
-        "the y": "they",
-        "hasbeen": "has been",
-        "privacyand": "privacy and",
-        "legaland": "legal and",
-        "therole": "the role",
+        "treatmentplanning": "treatment planning",
+        "productiveand": "productive and",
+        "sourcecontent": "source content",
+        "theevidence": "the evidence",
+        "standardclinical": "standard clinical",
+        "limitthe": "limit the",
+        "patientmonitoring": "patient monitoring",
+        "clinicalsettings": "clinical settings",
+        "medicalimaging": "medical imaging",
+        "drugdiscovery": "drug discovery",
+        "clinicaldecision": "clinical decision",
+        "patientcare": "patient care",
+        "healthcareAI": "healthcare AI",
+        "healthcarebalance": "healthcare balance",
+        "careapproaches": "care approaches",
+        "andpotential": "and potential",
+        "invarious": "in various",
+        "theautonomous": "the autonomous",
     }
 
     for old, new in replacements.items():
         text = text.replace(old, new)
 
-    # --------------------------------------------------------
-    # Remove section numbering
-    # --------------------------------------------------------
-
-    text = re.sub(
-        r'\b\d+\.\d+\b',
-        ' ',
-        text
-    )
-
-    # --------------------------------------------------------
-    # Remove square brackets
-    # --------------------------------------------------------
-
-    text = re.sub(
-        r'[\[\]]',
-        ' ',
-        text
-    )
-
-    # --------------------------------------------------------
-    # Remove repeated punctuation
-    # --------------------------------------------------------
-
-    text = re.sub(
-        r'\.{2,}',
-        '.',
-        text
-    )
-
-    text = re.sub(
-        r',{2,}',
-        ',',
-        text
-    )
-
-    # --------------------------------------------------------
-    # Normalize whitespace
-    # --------------------------------------------------------
-
-    text = re.sub(
-        r'\s+',
-        ' ',
-        text
-    )
-
-    return text.strip(" -:;,.()")
+    return " ".join(text.split())
 
 
-# ============================================================
-# SENTENCE VALIDATION
-# ============================================================
+def analyze_sources(question: str, sources: list[dict]) -> dict:
+    """Analyze all collected sources for one research question."""
 
-def is_valid_sentence(sentence: str) -> bool:
-    """Check whether a sentence looks like useful evidence."""
+    relevant_sources = []
 
-    sentence = sentence.strip()
+    for source in sources:
+        source_question = source.get("question", "").strip()
 
-    # Minimum character length
-    if len(sentence) < 60:
-        return False
+        if source_question == question:
+            relevant_sources.append(source)
 
-    # Minimum number of words
-    words = re.findall(
-        r"[A-Za-z]{3,}",
-        sentence
-    )
+    if not relevant_sources:
+        return {
+            "question": question,
+            "findings": []
+        }
 
-    if len(words) < 10:
-        return False
+    source_text = []
 
-    lower = sentence.lower()
+    for index, source in enumerate(relevant_sources, start=1):
+        title = clean_text(source.get("title", ""))
+        url = source.get("url", "").strip()
+        content = clean_text(source.get("content", ""))
 
-    # --------------------------------------------------------
-    # Reject common webpage noise
-    # --------------------------------------------------------
-
-    noise = [
-        "company logo",
-        "featured image",
-        "globe newswire",
-        "min read",
-        "read more",
-        "sign up",
-        "subscribe",
-        "cookie policy",
-        "privacy policy",
-        "terms of use",
-    ]
-
-    if any(item in lower for item in noise):
-        return False
-
-    # --------------------------------------------------------
-    # Reject broken references
-    # --------------------------------------------------------
-
-    if re.search(
-        r'\d{3,}-\d+/fulltext',
-        lower
-    ):
-        return False
-
-    # --------------------------------------------------------
-    # Reject URLs
-    # --------------------------------------------------------
-
-    if "http://" in lower or "https://" in lower:
-        return False
-
-    # --------------------------------------------------------
-    # Reject incomplete sentence endings
-    # --------------------------------------------------------
-
-    bad_endings = (
-        "with",
-        "and",
-        "or",
-        "the",
-        "to",
-        "of",
-        "for",
-        "from",
-        "by",
-        "than",
-        "such as",
-        "including",
-        "based on",
-        "according to",
-    )
-
-    if lower.endswith(bad_endings):
-        return False
-
-    # --------------------------------------------------------
-    # Reject scraped headings
-    # --------------------------------------------------------
-
-    bad_starts = (
-        "edit ",
-        "applications:",
-        "applications ",
-        "key takeaways",
-        "introduction:",
-        "conclusion:",
-        "table of contents",
-        "contents:",
-    )
-
-    if lower.startswith(bad_starts):
-        return False
-
-    # --------------------------------------------------------
-    # Reject sentences with excessive symbols
-    # --------------------------------------------------------
-
-    symbol_count = len(
-        re.findall(
-            r'[+|=\[\]{}]',
-            sentence
-        )
-    )
-
-    if symbol_count >= 4:
-        return False
-
-    return True
-
-
-# ============================================================
-# RELEVANCE EXTRACTION
-# ============================================================
-
-def extract_relevant_sentences(
-    question: str,
-    content: str,
-    max_sentences: int = 2
-) -> str:
-    """
-    Extract sentences that are relevant to the current
-    research question.
-    """
-
-    cleaned = clean_text(content)
-
-    if not cleaned:
-        return ""
-
-    # --------------------------------------------------------
-    # Extract meaningful words from question
-    # --------------------------------------------------------
-
-    question_words = set(
-        re.findall(
-            r"[a-zA-Z]{4,}",
-            question.lower()
-        )
-    )
-
-    # --------------------------------------------------------
-    # Remove generic question words
-    # --------------------------------------------------------
-
-    generic_words = {
-        "what",
-        "what's",
-        "how",
-        "when",
-        "where",
-        "which",
-        "why",
-        "does",
-        "major",
-        "main",
-        "used",
-        "using",
-        "about",
-        "from",
-        "with",
-        "into",
-        "than",
-        "that",
-        "this",
-        "these",
-        "those",
-        "their",
-        "there",
-        "across",
-        "current",
-        "likely",
-        "practical",
-        "technical",
-        "key",
-    }
-
-    question_words -= generic_words
-
-    if not question_words:
-        return ""
-
-    # --------------------------------------------------------
-    # Split text into sentences
-    # --------------------------------------------------------
-
-    sentences = re.split(
-        r'(?<=[.!?])\s+',
-        cleaned
-    )
-
-    scored_sentences = []
-
-    # --------------------------------------------------------
-    # Score every sentence
-    # --------------------------------------------------------
-
-    for sentence in sentences:
-
-        sentence = sentence.strip()
-
-        if not is_valid_sentence(sentence):
+        if not content:
             continue
 
-        sentence_words = set(
-            re.findall(
-                r"[a-zA-Z]{4,}",
-                sentence.lower()
-            )
+        source_text.append(
+            f"""
+SOURCE {index}
+Title: {title}
+URL: {url}
+Content:
+{content[:5000]}
+"""
         )
 
-        # Count matching research-question terms
-        overlap = len(
-            question_words.intersection(
-                sentence_words
-            )
-        )
+    if not source_text:
+        return {
+            "question": question,
+            "findings": []
+        }
 
-        # Ignore completely unrelated sentences
-        if overlap == 0:
-            continue
+    combined_sources = "\n".join(source_text)
 
-        # Higher overlap = higher relevance
-        score = overlap * 3
+    prompt = f"""
+You are a research evidence extraction agent.
 
-        # Prefer medium-length evidence
-        length_penalty = (
-            abs(len(sentence) - 220) / 1000
-        )
+Research question:
+{question}
 
-        score -= length_penalty
+Below are web sources collected for this question.
 
-        scored_sentences.append(
-            (
-                score,
-                sentence
-            )
-        )
+{combined_sources}
 
-    # --------------------------------------------------------
-    # Sort by relevance
-    # --------------------------------------------------------
+Task:
+Extract factual findings that directly answer the research question.
 
-    scored_sentences.sort(
-        key=lambda item: item[0],
-        reverse=True
-    )
+Rules:
+1. Use only information supported by the provided sources.
+2. Do not invent facts.
+3. Do not invent statistics.
+4. Do not include webpage navigation or advertisements.
+5. Each finding must be a complete sentence.
+6. Create 3 to 5 concise findings.
+7. Each finding must identify the source that supports it.
+8. Do not combine unrelated information.
+9. If the sources do not support a claim, do not include it.
 
-    selected = []
+Return exactly this format:
 
-    # --------------------------------------------------------
-    # Select unique sentences
-    # --------------------------------------------------------
+FINDING | SOURCE_NUMBER | CLAIM
 
-    for score, sentence in scored_sentences:
+Example:
 
-        duplicate = any(
-            sentence.lower() in existing.lower()
-            or existing.lower() in sentence.lower()
-            for existing in selected
-        )
+FINDING | 1 | Artificial intelligence is used for medical image analysis.
+FINDING | 2 | Artificial intelligence can support clinical decision making.
+"""
 
-        if duplicate:
-            continue
+    response = ask_llm(prompt)
 
-        selected.append(sentence)
-
-        if len(selected) >= max_sentences:
-            break
-
-    if not selected:
-        return ""
-
-    # --------------------------------------------------------
-    # Combine selected evidence
-    # --------------------------------------------------------
-
-    evidence = " ".join(selected)
-
-    # --------------------------------------------------------
-    # Limit evidence size
-    # --------------------------------------------------------
-
-    if len(evidence) > 900:
-
-        evidence = evidence[:900]
-
-        last_period = evidence.rfind(".")
-
-        if last_period > 300:
-            evidence = evidence[
-                :last_period + 1
-            ]
-
-    return evidence.strip()
-
-
-# ============================================================
-# RESEARCHER AGENT
-# ============================================================
-
-def analyze_sources(
-    question: str,
-    sources: list[dict]
-) -> dict:
-    """
-    Analyze sources belonging to one research question.
-    """
-
-    # --------------------------------------------------------
-    # Select sources belonging to this question
-    # --------------------------------------------------------
-
-    matching_sources = [
-        source
-        for source in sources
-        if source.get("question") == question
-    ]
+    if not response:
+        return {
+            "question": question,
+            "findings": []
+        }
 
     findings = []
 
-    # --------------------------------------------------------
-    # Extract evidence from each source
-    # --------------------------------------------------------
+    for line in response.splitlines():
+        line = line.strip()
 
-    for source in matching_sources:
-
-        content = source.get(
-            "content",
-            ""
-        )
-
-        evidence = extract_relevant_sentences(
-            question,
-            content
-        )
-
-        if not evidence:
+        if not line.startswith("FINDING"):
             continue
 
-        findings.append({
-            "claim": evidence,
-            "source_title": source.get(
-                "title",
-                ""
-            ),
-            "source_url": source.get(
-                "url",
-                ""
-            )
-        })
+        parts = line.split("|", 2)
 
-        # Maximum 5 findings per question
-        if len(findings) >= 5:
-            break
+        if len(parts) != 3:
+            continue
 
-    # --------------------------------------------------------
-    # Return structured research evidence
-    # --------------------------------------------------------
+        source_number = parts[1].strip()
+        claim = clean_text(parts[2].strip())
+
+        try:
+            source_index = int(source_number) - 1
+        except ValueError:
+            continue
+
+        if source_index < 0 or source_index >= len(relevant_sources):
+            continue
+
+        if len(claim) < 50:
+            continue
+
+        source = relevant_sources[source_index]
+
+        findings.append(
+            {
+                "claim": claim,
+                "source_title": clean_text(
+                    source.get("title", "")
+                ),
+                "source_url": source.get("url", "").strip(),
+                "source_content": clean_text(
+                    source.get("content", "")
+                ),
+            }
+        )
 
     return {
         "question": question,
-        "findings": findings
+        "findings": findings[:5],
     }
