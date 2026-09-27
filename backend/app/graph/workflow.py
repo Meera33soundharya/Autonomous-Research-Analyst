@@ -1,4 +1,4 @@
-from langgraph.graph import StateGraph, START, END
+﻿from langgraph.graph import StateGraph, START, END
 
 from app.graph.state import ResearchState
 
@@ -53,7 +53,7 @@ def searcher_node(state: ResearchState):
 
     questions = state["research_questions"]
 
-    results = run_search(questions)
+    results = run_search(state["topic"], questions)
 
     print(
         f"Collected {len(results)} web sources."
@@ -319,3 +319,4 @@ workflow.add_edge(
 # ============================================================
 
 research_graph = workflow.compile()
+

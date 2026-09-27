@@ -1,4 +1,37 @@
+import sys
+from pathlib import Path
+
 import streamlit as st
+from dotenv import load_dotenv
+
+
+# ============================================================
+# PROJECT PATHS
+# ============================================================
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+BACKEND_DIR = PROJECT_ROOT / "backend"
+
+sys.path.insert(0, str(BACKEND_DIR))
+
+
+# ============================================================
+# LOAD ENVIRONMENT
+# ============================================================
+
+load_dotenv(BACKEND_DIR / ".env")
+
+
+# ============================================================
+# IMPORT REAL LANGGRAPH WORKFLOW
+# ============================================================
+
+from app.graph.workflow import research_graph
+
+
+# ============================================================
+# STREAMLIT CONFIG
+# ============================================================
 
 st.set_page_config(
     page_title="Autonomous Research Analyst",
@@ -6,74 +39,298 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🔬 Autonomous Research Analyst")
-st.write("Multi-Agent AI Research Dashboard")
+
+# ============================================================
+# HEADER
+# ============================================================
+
+st.title("🔬 Autonomous Multi-Agent Research Analyst")
+
+st.write(
+    "AI-powered research system using multiple autonomous agents."
+)
 
 st.divider()
 
-topic = st.text_input(
+
+# ============================================================
+# RESEARCH INPUT
+# ============================================================
+
+topic = st.text_area(
     "Enter your research topic",
-    placeholder="Example: Artificial Intelligence in Healthcare"
+    placeholder="Example: Artificial Intelligence in Healthcare",
+    height=100
 )
 
-if st.button("🚀 Start Research"):
-    if not topic.strip():
-        st.warning("Please enter a research topic.")
-    else:
-        st.success(f"Research topic received: {topic}")
 
-        st.subheader("Research Pipeline")
+# ============================================================
+# START RESEARCH
+# ============================================================
+
+if st.button(
+    "🚀 Start Autonomous Research",
+    type="primary"
+):
+
+    if not topic.strip():
+
+        st.warning(
+            "Please enter a research topic."
+        )
+
+        st.stop()
+
+
+    st.subheader("🔄 Research Pipeline")
+
+    progress = st.progress(0)
+
+    status = st.empty()
+
+    try:
+
+        # ----------------------------------------------------
+        # PLANNER
+        # ----------------------------------------------------
+
+        status.info(
+            "🧠 Planner Agent — generating research questions..."
+        )
+
+        progress.progress(10)
+
+
+        # ----------------------------------------------------
+        # RUN COMPLETE LANGGRAPH WORKFLOW
+        # ----------------------------------------------------
+
+        result = research_graph.invoke(
+            {
+                "topic": topic.strip()
+            }
+        )
+
+
+        progress.progress(100)
+
+        status.success(
+            "✅ Research completed successfully."
+        )
+
+
+        # ====================================================
+        # RESEARCH QUESTIONS
+        # ====================================================
+
+        st.divider()
+
+        st.subheader("🧠 Research Questions")
+
+        questions = result.get(
+            "research_questions",
+            []
+        )
+
+        for i, question in enumerate(
+            questions,
+            1
+        ):
+
+            st.write(
+                f"**{i}.** {question}"
+            )
+
+
+        # ====================================================
+        # WEB SOURCES
+        # ====================================================
+
+        st.divider()
+
+        st.subheader("🔎 Web Research")
+
+        search_results = result.get(
+            "search_results",
+            []
+        )
+
+        st.metric(
+            "Web Sources Collected",
+            len(search_results)
+        )
+
+
+        # ====================================================
+        # VERIFIED EVIDENCE
+        # ====================================================
+
+        st.divider()
+
+        st.subheader("📚 Citation Verification")
+
+        verified_evidence = result.get(
+            "verified_evidence",
+            []
+        )
+
+        supported = 0
+        partial = 0
+        unsupported = 0
+
+        for group in verified_evidence:
+
+            for finding in group.get(
+                "findings",
+                []
+            ):
+
+                finding_status = finding.get(
+                    "status",
+                    ""
+                )
+
+                if finding_status == "SUPPORTED":
+
+                    supported += 1
+
+                elif finding_status == "PARTIALLY_SUPPORTED":
+
+                    partial += 1
+
+                elif finding_status == "UNSUPPORTED":
+
+                    unsupported += 1
+
 
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            st.info("🧠 Planner Agent")
-            st.write("Generating research questions...")
+
+            st.metric(
+                "✅ Supported",
+                supported
+            )
 
         with col2:
-            st.info("🔎 Searcher Agent")
-            st.write("Collecting web sources...")
+
+            st.metric(
+                "⚠️ Partially Supported",
+                partial
+            )
 
         with col3:
-            st.info("📚 Researcher Agent")
-            st.write("Analyzing evidence...")
 
-        col4, col5, col6 = st.columns(3)
+            st.metric(
+                "❌ Unsupported",
+                unsupported
+            )
 
-        with col4:
-            st.info("🧹 Evidence Cleaner")
-            st.write("Cleaning extracted evidence...")
 
-        with col5:
-            st.info("✅ Citation Checker")
-            st.write("Checking source support...")
-
-        with col6:
-            st.info("✍️ Writer Agent")
-            st.write("Preparing research report...")
+        # ====================================================
+        # FINAL REPORT
+        # ====================================================
 
         st.divider()
 
-        st.subheader("📊 Research Status")
+        st.subheader("📄 Final Research Report")
 
-        c1, c2, c3 = st.columns(3)
-
-        with c1:
-            st.metric("Research Questions", "5")
-
-        with c2:
-            st.metric("Web Sources", "15")
-
-        with c3:
-            st.metric("Pipeline", "Ready")
-
-        st.divider()
-
-        st.subheader("📄 Reports")
-
-        st.write("After the research workflow completes:")
-
-        st.code(
-            "reports/research_report.md\n"
-            "reports/research_report.pdf"
+        report = result.get(
+            "report",
+            ""
         )
+
+        if report:
+
+            st.markdown(report)
+
+        else:
+
+            st.warning(
+                "No report was generated."
+            )
+
+
+        # ====================================================
+        # DOWNLOAD REPORTS
+        # ====================================================
+
+        st.divider()
+
+        st.subheader("📥 Download Reports")
+
+        markdown_file = result.get(
+            "markdown_file"
+        )
+
+        pdf_file = result.get(
+            "pdf_file"
+        )
+
+
+        col1, col2 = st.columns(2)
+
+
+        # ----------------------------------------------------
+        # MARKDOWN
+        # ----------------------------------------------------
+
+        with col1:
+
+            if markdown_file:
+
+                markdown_path = Path(
+                    markdown_file
+                )
+
+                if markdown_path.exists():
+
+                    with open(
+                        markdown_path,
+                        "rb"
+                    ) as file:
+
+                        st.download_button(
+                            "📄 Download Markdown",
+                            file.read(),
+                            file_name="research_report.md",
+                            mime="text/markdown"
+                        )
+
+
+        # ----------------------------------------------------
+        # PDF
+        # ----------------------------------------------------
+
+        with col2:
+
+            if pdf_file:
+
+                pdf_path = Path(
+                    pdf_file
+                )
+
+                if pdf_path.exists():
+
+                    with open(
+                        pdf_path,
+                        "rb"
+                    ) as file:
+
+                        st.download_button(
+                            "📕 Download PDF",
+                            file.read(),
+                            file_name="research_report.pdf",
+                            mime="application/pdf"
+                        )
+
+
+    except Exception as error:
+
+        progress.empty()
+
+        status.error(
+            "❌ Research workflow failed."
+        )
+
+        st.exception(error)

@@ -21,7 +21,7 @@ def run_search(
             question,
             [
                 question,
-                f"{question} research study evidence"
+                f"{question} research evidence"
             ]
         )
 
@@ -35,10 +35,20 @@ def run_search(
                 f"[Searcher] Query: {query}"
             )
 
-            results = search_web(
-                query,
-                max_results=6
-            )
+            try:
+
+                results = search_web(
+                    query,
+                    max_results=5
+                )
+
+            except Exception as error:
+
+                print(
+                    f"[Searcher] Search error: {error}"
+                )
+
+                continue
 
             for result in results:
 
@@ -47,61 +57,30 @@ def run_search(
                     ""
                 )
 
-                title = result.get(
-                    "title",
-                    ""
-                )
-
-                key = (
-                    url
-                    or title.lower()
-                )
-
-                if not key:
+                if not url:
                     continue
 
-                if key in seen_urls:
+                if url in seen_urls:
                     continue
 
-                seen_urls.add(key)
+                seen_urls.add(url)
 
                 all_results.append(
                     {
                         "question": question,
                         "search_query": query,
-                        "title": title,
+                        "title": result.get(
+                            "title",
+                            ""
+                        ),
                         "url": url,
                         "content": result.get(
                             "content",
                             ""
                         ),
-                        "abstract": result.get(
-                            "abstract",
-                            ""
-                        ),
-                        "authors": result.get(
-                            "authors",
-                            []
-                        ),
-                        "year": result.get(
-                            "year",
-                            ""
-                        ),
-                        "venue": result.get(
-                            "venue",
-                            ""
-                        ),
-                        "doi": result.get(
-                            "doi",
-                            ""
-                        ),
-                        "citation_count": result.get(
-                            "citation_count",
+                        "score": result.get(
+                            "score",
                             0
-                        ),
-                        "source_type": result.get(
-                            "source_type",
-                            "Web Search"
                         ),
                         "source_quality": result.get(
                             "source_quality",

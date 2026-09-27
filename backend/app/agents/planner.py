@@ -1,199 +1,63 @@
+﻿import json
 import re
 
 from app.services.llm_service import ask_llm
 
 
-def clean_question(question: str) -> str:
-    """Clean and normalize a generated research question."""
+def _extract_questions(response: str) -> list[str]:
 
-    if not question:
-        return ""
+    response = response.strip()
 
-    question = question.strip()
+    # --------------------------------------------------------
+    # First: try JSON
+    # --------------------------------------------------------
 
-    # Remove bullets
-    question = question.lstrip("-• ")
+    try:
 
-    # Remove numbering such as 1. / 2.
-    if "." in question[:4]:
-        prefix, rest = question.split(".", 1)
+        match = re.search(
+            r"\[.*\]",
+            response,
+            re.DOTALL
+        )
 
-        if prefix.strip().isdigit():
-            question = rest.strip()
+        if match:
 
-    # Normalize Unicode dashes
-    question = question.replace("–", "-")
-    question = question.replace("—", "-")
-    question = question.replace("-", "-")
+            data = json.loads(
+                match.group(0)
+            )
 
-    # Fix common joined words
-    replacements = {
-        "improvepatient": "improve patient",
-        "improvingpatient": "improving patient",
-        "theeffectiveness": "the effectiveness",
-        "implementationof": "implementation of",
-        "implementation ofartificial": "implementation of artificial",
+            if isinstance(data, list):
 
-        "regulatoryframeworks": "regulatory frameworks",
-        "regulatoryframework": "regulatory framework",
+                questions = []
 
-        "artificialintelligence": "artificial intelligence",
-        "artificialintelligencein": "artificial intelligence in",
+                for item in data:
 
-        "healthcareproviders": "healthcare providers",
-        "healthcareprovider": "healthcare provider",
-        "healthcareinstitutions": "healthcare institutions",
-        "healthcareorganizations": "healthcare organizations",
+                    if isinstance(item, str):
 
-        "patientcare": "patient care",
-        "patientmonitoring": "patient monitoring",
-        "patientmanagement": "patient management",
+                        question = item.strip()
 
-        "medicalimaging": "medical imaging",
-        "medicaldiagnosis": "medical diagnosis",
-        "drugdiscovery": "drug discovery",
+                        if (
+                            question
+                            and "MUST be based" not in question
+                            and "Never assume" not in question
+                            and "Never use hardcoded" not in question
+                            and "Do not mention" not in question
+                            and "Adapt the questions" not in question
+                        ):
 
-        "smartalgorithms": "smart algorithms",
-        "theuse": "the use",
-        "theimpact": "the impact",
-        "findingswere": "findings were",
+                            questions.append(
+                                question
+                            )
 
-        "sourcecontent": "source content",
+                if len(questions) >= 5:
+                    return questions[:5]
 
-        "Intelligencein": "Intelligence in",
-        "intelligencein": "intelligence in",
-        "inHealthcare": "in Healthcare",
-        "inhealthcare": "in healthcare",
+    except Exception:
+        pass
 
-        "integrationwith": "integration with",
-        "internationalcollaboration": "international collaboration",
-
-        "diagnostictools": "diagnostic tools",
-        "diagnostictool": "diagnostic tool",
-
-        "AI-drivendiagnostic": "AI-driven diagnostic",
-        "AI-drivendiagnostictools": "AI-driven diagnostic tools",
-
-        "algorithmicerrors": "algorithmic errors",
-        "ethicaluse": "ethical use",
-        "ethicalframeworks": "ethical frameworks",
-
-        "safetyand": "safety and",
-        "efficacyand": "efficacy and",
-
-        "data privacy": "data privacy",
-        "dataprivacy": "data privacy",
-
-        "accountabilityconcerns": "accountability concerns",
-        "workflowintegration": "workflow integration",
-        "staffacceptance": "staff acceptance",
-        "safetystandards": "safety standards",
-
-        "futuredevelopment": "future development",
-        "futuredevelopments": "future developments",
-    }
-
-    for old, new in replacements.items():
-        question = question.replace(old, new)
-
-    # Fix common AI joins
-    question = re.sub(
-        r"(?i)\bofAI\b",
-        "of AI",
-        question
-    )
-
-    question = re.sub(
-        r"(?i)\bforAI\b",
-        "for AI",
-        question
-    )
-
-    question = re.sub(
-        r"(?i)\bwithAI\b",
-        "with AI",
-        question
-    )
-
-    question = re.sub(
-        r"(?i)\bandAI\b",
-        "and AI",
-        question
-    )
-
-    # Fix joined "AI-based", "AI-driven", etc.
-    question = re.sub(
-        r"(?i)\bofAI-",
-        "of AI-",
-        question
-    )
-
-    question = re.sub(
-        r"(?i)\bforAI-",
-        "for AI-",
-        question
-    )
-
-    question = re.sub(
-        r"(?i)\bwithAI-",
-        "with AI-",
-        question
-    )
-
-    # Normalize whitespace
-    question = " ".join(question.split())
-
-    # Fix spaces before punctuation
-    question = question.replace(" ,", ",")
-    question = question.replace(" .", ".")
-    question = question.replace(" ?", "?")
-
-    # Ensure question mark
-    if question and not question.endswith("?"):
-        question += "?"
-
-    return question
-
-
-def create_research_plan(topic: str) -> list[str]:
-    """Generate exactly five research questions."""
-
-    prompt = f"""
-You are a research planning agent.
-
-Research topic:
-{topic}
-
-Generate exactly 5 research questions.
-
-The questions must cover:
-
-1. Applications
-2. Effectiveness and accuracy
-3. Risks, limitations, and ethical concerns
-4. Adoption barriers
-5. Future development, regulation, safety, and ethics
-
-IMPORTANT RULES:
-
-- Return exactly 5 questions.
-- Return one question per line.
-- Do not number the questions.
-- Do not use bullet points.
-- Use normal spaces between every word.
-- Never join two words together.
-- Use clear academic English.
-- Each question must be complete.
-- Do not include explanations.
-- Do not include headings.
-- Do not include answers.
-- Do not include citations.
-- Do not include URLs.
-
-Return ONLY the five questions.
-"""
-
-    response = ask_llm(prompt)
+    # --------------------------------------------------------
+    # Second: parse only lines ending with ?
+    # --------------------------------------------------------
 
     questions = []
 
@@ -204,42 +68,117 @@ Return ONLY the five questions.
         if not line:
             continue
 
-        cleaned = clean_question(line)
+        line = re.sub(
+            r"^[\-\*\d\.\)\s]+",
+            "",
+            line
+        ).strip()
 
-        if len(cleaned) < 20:
+        if not line.endswith("?"):
             continue
 
-        if cleaned.endswith("?"):
-            questions.append(cleaned)
+        if len(line) < 25:
+            continue
 
-    # Remove duplicate questions
-    unique_questions = []
-
-    for question in questions:
-
-        if question.lower() not in [
-            q.lower()
-            for q in unique_questions
-        ]:
-            unique_questions.append(question)
-
-    # Safe fallback if the LLM does not return 5 questions
-    if len(unique_questions) < 5:
-
-        unique_questions = [
-            f"What are the major applications of {topic}?",
-
-            f"How effective and accurate is {topic} "
-            f"in real-world applications?",
-
-            f"What are the major risks, limitations, "
-            f"and ethical concerns of {topic}?",
-
-            f"What are the main barriers to adopting "
-            f"{topic}?",
-
-            f"What future developments and regulatory "
-            f"considerations are important for {topic}?",
+        blocked = [
+            "must be based",
+            "never assume",
+            "never use hardcoded",
+            "do not mention healthcare",
+            "adapt the questions",
+            "return only",
+            "important rules",
         ]
 
-    return unique_questions[:5]
+        if any(
+            phrase in line.lower()
+            for phrase in blocked
+        ):
+            continue
+
+        questions.append(line)
+
+    return questions[:5]
+
+
+def create_research_plan(
+    topic: str
+) -> list[str]:
+
+    topic = topic.strip()
+
+    if not topic:
+        return []
+
+    prompt = f"""
+You are the Planner Agent of an autonomous research analyst.
+
+USER TOPIC:
+{topic}
+
+Create exactly 5 research questions about the USER TOPIC.
+
+The questions must be specific to the topic.
+
+IMPORTANT:
+- Generate questions, not instructions.
+- Do not explain your process.
+- Do not repeat these instructions.
+- Do not mention healthcare unless the topic is healthcare.
+- Do not use questions from another topic.
+- Cover different important aspects of the topic.
+- Use established terminology related to the topic.
+- Questions should be suitable for web and academic research.
+- Return ONLY a JSON array of exactly 5 strings.
+- Do not use markdown.
+- Do not add any text before or after the JSON.
+
+Example format only:
+
+[
+  "What are the main ...?",
+  "How does ...?",
+  "What are the major ...?",
+  "What evidence exists for ...?",
+  "What future developments ...?"
+]
+
+Generate the questions now for:
+
+{topic}
+"""
+
+    response = ask_llm(
+        prompt
+    )
+
+    questions = _extract_questions(
+        response
+    )
+
+    # --------------------------------------------------------
+    # Safety fallback
+    # --------------------------------------------------------
+
+    if len(questions) < 5:
+
+        fallback_prompt = f"""
+Generate exactly 5 research questions for this topic:
+
+{topic}
+
+Return only 5 separate question sentences.
+Every sentence must end with a question mark.
+Do not include instructions, explanations, headings,
+rules, examples, or commentary.
+"""
+
+        fallback_response = ask_llm(
+            fallback_prompt
+        )
+
+        questions = _extract_questions(
+            fallback_response
+        )
+
+    return questions[:5]

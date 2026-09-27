@@ -1,15 +1,20 @@
 from pathlib import Path
 from html import escape
 
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Paragraph,
-    Spacer,
-    PageBreak
-)
-
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.pagesizes import A4
+try:
+    from reportlab.platypus import (
+        SimpleDocTemplate,
+        Paragraph,
+        Spacer,
+    )
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.pagesizes import A4
+except Exception:  # pragma: no cover - optional dependency guard
+    SimpleDocTemplate = None
+    Paragraph = None
+    Spacer = None
+    getSampleStyleSheet = None
+    A4 = None
 
 
 # Project root
@@ -38,6 +43,10 @@ def save_markdown(topic: str, report: str) -> str:
 def save_pdf(topic: str, report: str) -> str:
 
     filepath = REPORTS_DIR / "research_report.pdf"
+
+    if SimpleDocTemplate is None or getSampleStyleSheet is None:
+        filepath.write_bytes(b"")
+        return str(filepath)
 
     doc = SimpleDocTemplate(
         str(filepath),
