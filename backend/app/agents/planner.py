@@ -1,109 +1,91 @@
-﻿import json
 import re
 
 from app.services.llm_service import ask_llm
 
 
-def _extract_questions(response: str) -> list[str]:
+BAD_PHRASES = [
+    "create exactly",
+    "research questions specifically",
+    "every question must",
+    "the questions must",
+    "never assume",
+    "never use hardcoded",
+    "do not assume",
+    "do not discuss",
+    "do not mention",
+    "adapt the questions",
+    "supplied topic",
+    "requested research topic",
+    "your task",
+    "output only",
+    "rules:",
+]
 
-    response = response.strip()
 
-    # --------------------------------------------------------
-    # First: try JSON
-    # --------------------------------------------------------
+def _fallback_questions(topic: str) -> list[str]:
+    return [
+        f"What is {topic}, and what are its main concepts and characteristics?",
+        f"What are the major applications, uses, or benefits of {topic}?",
+        f"What research evidence and findings currently exist about {topic}?",
+        f"What are the main challenges, limitations, and risks associated with {topic}?",
+        f"What future developments and research opportunities exist for {topic}?",
+    ]
 
-    try:
 
-        match = re.search(
-            r"\[.*\]",
-            response,
-            re.DOTALL
-        )
-
-        if match:
-
-            data = json.loads(
-                match.group(0)
-            )
-
-            if isinstance(data, list):
-
-                questions = []
-
-                for item in data:
-
-                    if isinstance(item, str):
-
-                        question = item.strip()
-
-                        if (
-                            question
-                            and "MUST be based" not in question
-                            and "Never assume" not in question
-                            and "Never use hardcoded" not in question
-                            and "Do not mention" not in question
-                            and "Adapt the questions" not in question
-                        ):
-
-                            questions.append(
-                                question
-                            )
-
-                if len(questions) >= 5:
-                    return questions[:5]
-
-    except Exception:
-        pass
-
-    # --------------------------------------------------------
-    # Second: parse only lines ending with ?
-    # --------------------------------------------------------
-
+def _clean_questions(response: str, topic: str) -> list[str]:
     questions = []
 
-    for line in response.splitlines():
+    topic_words = [
+        word.lower()
+        for word in re.findall(r"[A-Za-z0-9]+", topic)
+        if len(word) >= 4
+    ]
 
-        line = line.strip()
+    for raw_line in response.splitlines():
+
+        line = raw_line.strip()
 
         if not line:
             continue
 
         line = re.sub(
-            r"^[\-\*\d\.\)\s]+",
+            r"^\s*(?:\d+[\.\)]|[-*])\s*",
             "",
             line
         ).strip()
 
-        if not line.endswith("?"):
+        lower = line.lower()
+
+        # Reject prompt instructions
+        if any(bad in lower for bad in BAD_PHRASES):
+            continue
+
+        # Must look like a real question
+        if "?" not in line:
             continue
 
         if len(line) < 25:
             continue
 
-        blocked = [
-            "must be based",
-            "never assume",
-            "never use hardcoded",
-            "do not mention healthcare",
-            "adapt the questions",
-            "return only",
-            "important rules",
-        ]
+        # Must contain at least one important topic word
+        if topic_words:
+            topic_match = any(
+                word in lower
+                for word in topic_words
+            )
 
-        if any(
-            phrase in line.lower()
-            for phrase in blocked
-        ):
-            continue
+            if not topic_match:
+                continue
 
-        questions.append(line)
+        line = line.rstrip(" ?") + "?"
+
+        if line not in questions:
+            questions.append(line)
 
     return questions[:5]
 
 
-def create_research_plan(
-    topic: str
-) -> list[str]:
+def run_planner(topic: str) -> list[str]:
 
     topic = topic.strip()
 
@@ -113,72 +95,48 @@ def create_research_plan(
     prompt = f"""
 You are the Planner Agent of an autonomous research analyst.
 
-USER TOPIC:
+Research topic:
 {topic}
 
-Create exactly 5 research questions about the USER TOPIC.
+Generate exactly five research questions ONLY about the research topic above.
 
-The questions must be specific to the topic.
+Question 1 must focus on definition and key concepts.
+Question 2 must focus on applications, uses, or benefits.
+Question 3 must focus on research evidence and findings.
+Question 4 must focus on challenges, limitations, or risks.
+Question 5 must focus on future developments and research opportunities.
 
-IMPORTANT:
-- Generate questions, not instructions.
-- Do not explain your process.
-- Do not repeat these instructions.
-- Do not mention healthcare unless the topic is healthcare.
-- Do not use questions from another topic.
-- Cover different important aspects of the topic.
-- Use established terminology related to the topic.
-- Questions should be suitable for web and academic research.
-- Return ONLY a JSON array of exactly 5 strings.
-- Do not use markdown.
-- Do not add any text before or after the JSON.
+Do not output explanations.
+Do not output instructions.
+Do not repeat this prompt.
+Do not mention healthcare unless healthcare is actually part of the topic.
 
-Example format only:
-
-[
-  "What are the main ...?",
-  "How does ...?",
-  "What are the major ...?",
-  "What evidence exists for ...?",
-  "What future developments ...?"
-]
-
-Generate the questions now for:
-
-{topic}
+Return only five numbered questions.
 """
 
-    response = ask_llm(
-        prompt
-    )
+    try:
 
-    questions = _extract_questions(
-        response
-    )
+        response = ask_llm(prompt)
 
-    # --------------------------------------------------------
-    # Safety fallback
-    # --------------------------------------------------------
+        if not isinstance(response, str):
+            response = str(response)
 
-    if len(questions) < 5:
-
-        fallback_prompt = f"""
-Generate exactly 5 research questions for this topic:
-
-{topic}
-
-Return only 5 separate question sentences.
-Every sentence must end with a question mark.
-Do not include instructions, explanations, headings,
-rules, examples, or commentary.
-"""
-
-        fallback_response = ask_llm(
-            fallback_prompt
+        questions = _clean_questions(
+            response,
+            topic
         )
 
-        questions = _extract_questions(
-            fallback_response
-        )
+        if len(questions) == 5:
+            return questions
 
-    return questions[:5]
+    except Exception:
+        pass
+
+    return _fallback_questions(topic)
+
+
+def create_research_plan(topic: str) -> list[str]:
+    """
+    Compatibility function used by workflow.py.
+    """
+    return run_planner(topic)

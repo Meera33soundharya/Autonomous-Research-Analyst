@@ -1,0 +1,11 @@
+﻿
+streamlit==1.63.0
+fastapi
+uvicorn
+python-dotenv
+openai
+langchain
+langgraph
+reportlab
+tavily-python
+requests

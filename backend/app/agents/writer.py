@@ -36,20 +36,20 @@ def clean_report_text(text: str) -> str:
         text = text.replace(old, new)
 
     text = re.sub(
-        r'\s+',
-        ' ',
+        r"\s+",
+        " ",
         text
     )
 
     text = re.sub(
-        r'\s+([,.!?;:])',
-        r'\1',
+        r"\s+([,.!?;:])",
+        r"\1",
         text
     )
 
     text = re.sub(
-        r'([,.!?;:])([A-Za-z])',
-        r'\1 \2',
+        r"([,.!?;:])([A-Za-z])",
+        r"\1 \2",
         text
     )
 
@@ -64,11 +64,19 @@ def generate_report(
 
     report = []
 
+    # ========================================================
+    # TITLE
+    # ========================================================
+
     report.append(
         f"# {topic}"
     )
 
     report.append("")
+
+    # ========================================================
+    # 1. EXECUTIVE SUMMARY
+    # ========================================================
 
     report.append(
         "## 1. Executive Summary"
@@ -126,6 +134,10 @@ def generate_report(
 
     report.append("")
 
+    # ========================================================
+    # 2. INTRODUCTION
+    # ========================================================
+
     report.append(
         "## 2. Introduction"
     )
@@ -141,6 +153,10 @@ def generate_report(
     )
 
     report.append("")
+
+    # ========================================================
+    # 3. KEY FINDINGS
+    # ========================================================
 
     report.append(
         "## 3. Key Findings"
@@ -172,11 +188,16 @@ def generate_report(
                 ""
             ).upper()
 
+            # Include only verified findings
             if status not in [
                 "SUPPORTED",
                 "PARTIALLY_SUPPORTED"
             ]:
                 continue
+
+            # ------------------------------------------------
+            # Claim
+            # ------------------------------------------------
 
             claim = clean_report_text(
                 finding.get(
@@ -185,16 +206,42 @@ def generate_report(
                 ).strip()
             )
 
+            # ------------------------------------------------
+            # SOURCE TITLE
+            #
+            # New format:
+            # source_title
+            #
+            # Fallback:
+            # source
+            # ------------------------------------------------
+
             source = clean_report_text(
                 finding.get(
-                    "source",
-                    ""
+                    "source_title",
+                    finding.get(
+                        "source",
+                        ""
+                    )
                 ).strip()
             )
 
+            # ------------------------------------------------
+            # SOURCE URL
+            #
+            # New format:
+            # source_url
+            #
+            # Fallback:
+            # url
+            # ------------------------------------------------
+
             url = finding.get(
-                "url",
-                ""
+                "source_url",
+                finding.get(
+                    "url",
+                    ""
+                )
             ).strip()
 
             if not claim:
@@ -206,6 +253,10 @@ def generate_report(
                 "url": url,
                 "status": status
             })
+
+            # ------------------------------------------------
+            # Build unique reference list
+            # ------------------------------------------------
 
             reference_key = (
                 source,
@@ -231,11 +282,19 @@ def generate_report(
         if not valid_findings:
             continue
 
+        # ----------------------------------------------------
+        # Research Question
+        # ----------------------------------------------------
+
         report.append(
             f"### {question}"
         )
 
         report.append("")
+
+        # ----------------------------------------------------
+        # Findings
+        # ----------------------------------------------------
 
         for finding in valid_findings:
 
@@ -252,6 +311,10 @@ def generate_report(
             )
 
             report.append("")
+
+    # ========================================================
+    # 4. EVIDENCE ANALYSIS
+    # ========================================================
 
     report.append(
         "## 4. Evidence Analysis"
@@ -283,6 +346,10 @@ def generate_report(
 
     report.append("")
 
+    # ========================================================
+    # 5. CHALLENGES AND LIMITATIONS
+    # ========================================================
+
     report.append(
         "## 5. Challenges and Limitations"
     )
@@ -311,6 +378,10 @@ def generate_report(
 
         report.append("")
 
+    # ========================================================
+    # 6. FUTURE OPPORTUNITIES
+    # ========================================================
+
     report.append(
         "## 6. Future Opportunities"
     )
@@ -325,6 +396,10 @@ def generate_report(
     )
 
     report.append("")
+
+    # ========================================================
+    # 7. CONCLUSION
+    # ========================================================
 
     report.append(
         "## 7. Conclusion"
@@ -349,6 +424,10 @@ def generate_report(
     )
 
     report.append("")
+
+    # ========================================================
+    # REFERENCES
+    # ========================================================
 
     report.append(
         "## References"

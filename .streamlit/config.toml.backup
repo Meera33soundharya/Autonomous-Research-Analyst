@@ -3,11 +3,9 @@ headless = true
 enableCORS = false
 enableXsrfProtection = false
 enableWebsocketCompression = false
-fileWatcherType = "none"
-port = 8521
-address = "127.0.0.1"
+port = 8503
 
 [browser]
-serverAddress = "127.0.0.1"
-serverPort = 8521
+serverAddress = "localhost"
+serverPort = 8503
 gatherUsageStats = false

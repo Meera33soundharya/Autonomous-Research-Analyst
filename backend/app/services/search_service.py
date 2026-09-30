@@ -36,8 +36,8 @@ def search_web(
 
         response = client.search(
             query=query,
-            search_depth="advanced",
-            max_results=max_results
+            search_depth="basic",
+            max_results=3
         )
 
         for result in response.get(
@@ -132,4 +132,7 @@ def search_web(
     return ranked[
         : max_results * 2
     ]
+
+
+
 

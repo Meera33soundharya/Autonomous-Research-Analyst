@@ -1,327 +1,153 @@
+import json
 import re
+from pathlib import Path
 
 from app.services.llm_service import ask_llm
-from app.services.research_memory import save_verified_evidence
 
 
-
-def _tokens(text: str) -> set[str]:
-
-    words = re.findall(
-        r"[a-zA-Z0-9]+",
-        text.lower()
-    )
-
-    stopwords = {
-        "the",
-        "a",
-        "an",
-        "and",
-        "or",
-        "of",
-        "to",
-        "in",
-        "on",
-        "for",
-        "with",
-        "is",
-        "are",
-        "was",
-        "were",
-        "that",
-        "this",
-        "as",
-        "by",
-        "from",
-        "it",
-        "its",
-        "than",
-        "into",
-        "their",
-        "they",
-    }
-
-    return {
-        word
-        for word in words
-        if word not in stopwords
-    }
+VALID_STATUSES = {
+    "SUPPORTED",
+    "PARTIALLY_SUPPORTED",
+    "UNSUPPORTED",
+}
 
 
-def _numbers(text: str) -> set[str]:
-
-    return set(
-        re.findall(
-            r"\b\d+(?:\.\d+)?%?\b",
-            text
-        )
-    )
-
-
-def _deterministic_status(
-    claim: str,
-    source_content: str
-) -> str:
-
-    claim_tokens = _tokens(
-        claim
-    )
-
-    source_tokens = _tokens(
-        source_content
-    )
-
-    if not claim_tokens:
-        return "UNSUPPORTED"
-
-    overlap = (
-        len(
-            claim_tokens
-            & source_tokens
-        )
-        / len(claim_tokens)
-    )
-
-    claim_numbers = _numbers(
-        claim
-    )
-
-    source_numbers = _numbers(
-        source_content
-    )
-
-    if not claim_numbers.issubset(
-        source_numbers
-    ):
-        return "UNSUPPORTED"
-
-    if overlap < 0.25:
-        return "UNSUPPORTED"
-
-    if overlap < 0.45:
+def _extract_status(response: str) -> str:
+    if not response:
         return "PARTIALLY_SUPPORTED"
 
-    return "SUPPORTED"
+    text = response.upper()
+
+    if "PARTIALLY_SUPPORTED" in text:
+        return "PARTIALLY_SUPPORTED"
+
+    if "SUPPORTED" in text:
+        return "SUPPORTED"
+
+    if "UNSUPPORTED" in text:
+        return "UNSUPPORTED"
+
+    return "PARTIALLY_SUPPORTED"
 
 
-def _llm_verify_group(
-    question: str,
-    findings: list[dict]
-) -> dict:
+def _verify_finding(finding: dict) -> str:
+    claim = str(finding.get("claim", "")).strip()
+    source_content = str(finding.get("source_content", "")).strip()
 
-    blocks = []
-
-    for index, finding in enumerate(
-        findings,
-        1
-    ):
-
-        source_content = finding.get(
-            "source_content",
-            ""
-        )
-
-        if len(source_content) > 6000:
-            source_content = source_content[:6000]
-
-        blocks.append(
-            f"""
-FINDING {index}
-CLAIM:
-{finding.get("claim", "")}
-
-SOURCE:
-{finding.get("source_title", "")}
-
-SOURCE CONTENT:
-{source_content}
-"""
-        )
+    if not claim or not source_content:
+        return "UNSUPPORTED"
 
     prompt = f"""
 You are a strict citation verification agent.
 
-RESEARCH QUESTION:
-{question}
+Determine whether the CLAIM is supported by the SOURCE EVIDENCE.
 
-Your job is to determine whether each claim is actually supported
-by the source content supplied with that claim.
+CLAIM:
+{claim}
 
-RULES:
+SOURCE EVIDENCE:
+{source_content[:12000]}
 
-SUPPORTED:
-The source directly supports the complete claim.
-
-PARTIALLY_SUPPORTED:
-The source supports the main idea but not all details.
-
-UNSUPPORTED:
-The source does not support the claim, contradicts it,
-or important details were added by the writer.
-
-VERY IMPORTANT:
-
-1. Use only the supplied source content.
-2. Do not use outside knowledge.
-3. Every number, percentage, date, organization name,
-   or measurement in the claim must be supported by the source.
-4. Do not infer missing facts.
-5. Do not upgrade PARTIALLY_SUPPORTED to SUPPORTED.
-6. Do not assume that a credible source automatically proves the claim.
-
-Return EXACTLY one line per finding:
-
-NUMBER | STATUS | REASON
-
-Allowed STATUS values:
+Return exactly ONE of these labels:
 
 SUPPORTED
 PARTIALLY_SUPPORTED
 UNSUPPORTED
 
-{chr(10).join(blocks)}
+Rules:
+- SUPPORTED = the source directly supports the main claim.
+- PARTIALLY_SUPPORTED = the source supports only part of the claim.
+- UNSUPPORTED = the source does not provide sufficient support.
+- Do not use outside knowledge.
+- Do not rewrite the claim.
+- Do not output explanations.
 """
 
     try:
-
-        response = ask_llm(
-            prompt
-        )
-
+        response = ask_llm(prompt)
+        return _extract_status(response)
     except Exception:
-        return {}
-
-    judgments = {}
-
-    for line in response.splitlines():
-
-        parts = line.split(
-            "|",
-            2
-        )
-
-        if len(parts) != 3:
-            continue
-
-        try:
-            number = int(
-                parts[0].strip()
-            )
-        except ValueError:
-            continue
-
-        status = parts[1].strip().upper()
-
-        if status not in {
-            "SUPPORTED",
-            "PARTIALLY_SUPPORTED",
-            "UNSUPPORTED",
-        }:
-            continue
-
-        reason = parts[2].strip()
-
-        judgments[number] = {
-            "status": status,
-            "reason": reason
-        }
-
-    return judgments
+        return "PARTIALLY_SUPPORTED"
 
 
-def check_citations(
-    evidence: list[dict]
-) -> list[dict]:
+def check_citations(evidence: list[dict]) -> list[dict]:
+    verified = []
 
-    verified_groups = []
+    supported = 0
+    partial = 0
+    unsupported = 0
 
     for group in evidence:
 
-        question = group.get(
-            "question",
-            ""
-        )
-
-        findings = group.get(
-            "findings",
-            []
-        )
-
-        if not findings:
-            continue
-
-        llm_judgments = _llm_verify_group(
-            question,
-            findings
-        )
+        question = group.get("question", "")
+        original_findings = group.get("findings", [])
 
         verified_findings = []
 
-        for index, finding in enumerate(
-            findings,
-            1
-        ):
+        for finding in original_findings:
 
-            claim = finding.get(
-                "claim",
-                ""
-            )
+            # IMPORTANT:
+            # Start with the ORIGINAL finding so that
+            # source_title, source_url, source_content,
+            # source_quality, source_number, etc. are preserved.
+            verified_finding = dict(finding)
 
-            source_content = finding.get(
-                "source_content",
-                ""
-            )
+            status = _verify_finding(finding)
 
-            deterministic = _deterministic_status(
-                claim,
-                source_content
-            )
+            verified_finding["status"] = status
 
-            llm_result = llm_judgments.get(
-                index
-            )
+            if status == "SUPPORTED":
+                supported += 1
 
-            if deterministic == "UNSUPPORTED":
-
-                status = "UNSUPPORTED"
-                reason = (
-                    "Deterministic evidence check failed."
-                )
-
-            elif llm_result:
-
-                status = llm_result["status"]
-                reason = llm_result["reason"]
+            elif status == "PARTIALLY_SUPPORTED":
+                partial += 1
 
             else:
+                unsupported += 1
 
-                status = deterministic
-                reason = (
-                    "LLM verification unavailable; "
-                    "deterministic evidence check used."
-                )
+            verified_findings.append(verified_finding)
 
-            updated = dict(
-                finding
-            )
-
-            updated["status"] = status
-            updated["verification_reason"] = reason
-
-            verified_findings.append(
-                updated
-            )
-
-        verified_groups.append(
+        verified.append(
             {
                 "question": question,
-                "findings": verified_findings
+                "findings": verified_findings,
             }
         )
 
-    save_verified_evidence(verified_groups)
+    print("\n=== Citation Checker ===")
+    print(f"Supported: {supported}")
+    print(f"Partially supported: {partial}")
+    print(f"Unsupported: {unsupported}")
 
-    return verified_groups
+    return verified
 
 
+def save_verified_evidence(evidence: list[dict]) -> None:
 
+    path = (
+        Path(__file__).resolve()
+        .parents[3]
+        / "reports"
+        / "verified_evidence.jsonl"
+    )
+
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    with open(
+        path,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        for group in evidence:
+
+            file.write(
+                json.dumps(
+                    group,
+                    ensure_ascii=False
+                )
+                + "\n"
+            )

@@ -37,7 +37,7 @@ def run_search(
 
             results = search_web(
                 query,
-                max_results=6
+                max_results=3
             )
 
             for result in results:
@@ -116,3 +116,6 @@ def run_search(
     )
 
     return all_results
+
+
+
