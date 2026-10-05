@@ -11,6 +11,8 @@ class ResearchState(TypedDict, total=False):
 
     evidence: list[dict]
 
+    cleaned_evidence: list[dict]
+
     verified_evidence: list[dict]
 
     report: str

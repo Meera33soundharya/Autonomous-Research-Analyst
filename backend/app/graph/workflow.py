@@ -1,4 +1,4 @@
-﻿from langgraph.graph import StateGraph, START, END
+from langgraph.graph import StateGraph, START, END
 
 from app.graph.state import ResearchState
 
@@ -53,7 +53,14 @@ def searcher_node(state: ResearchState):
 
     questions = state["research_questions"]
 
-    results = run_search(state["topic"], questions)
+    print(
+        f"Searching sources for {len(questions)} research questions..."
+    )
+
+    results = run_search(
+        state["topic"],
+        questions
+    )
 
     print(
         f"Collected {len(results)} web sources."
@@ -100,16 +107,19 @@ def researcher_node(state: ResearchState):
 
 
 # ============================================================
-# 4. EVIDENCE CLEANER + CITATION CHECKER
+# 4. EVIDENCE CLEANER
 # ============================================================
 
-def citation_checker_node(state: ResearchState):
+def evidence_cleaner_node(state: ResearchState):
 
     print("\n=== Evidence Cleaner ===")
 
     evidence = state["evidence"]
 
-    # Clean extracted webpage evidence
+    print(
+        "Cleaning extracted research evidence..."
+    )
+
     cleaned_evidence = clean_evidence(
         evidence
     )
@@ -132,11 +142,26 @@ def citation_checker_node(state: ResearchState):
         f"Clean findings: {cleaned_count}"
     )
 
-    # --------------------------------------------------------
-    # Citation Checker
-    # --------------------------------------------------------
+    return {
+        "cleaned_evidence": cleaned_evidence
+    }
+
+
+# ============================================================
+# 5. CITATION CHECKER
+# ============================================================
+
+def citation_checker_node(state: ResearchState):
 
     print("\n=== Citation Checker ===")
+
+    cleaned_evidence = state[
+        "cleaned_evidence"
+    ]
+
+    print(
+        "Verifying research claims against sources..."
+    )
 
     verified = check_citations(
         cleaned_evidence
@@ -188,7 +213,7 @@ def citation_checker_node(state: ResearchState):
 
 
 # ============================================================
-# 5. WRITER AGENT
+# 6. WRITER AGENT
 # ============================================================
 
 def writer_node(state: ResearchState):
@@ -201,19 +226,32 @@ def writer_node(state: ResearchState):
         state["verified_evidence"]
     )
 
+    print(
+        "Generating final research report..."
+    )
+
+    # --------------------------------------------------------
     # Generate final report
+    # --------------------------------------------------------
+
     report = generate_report(
         topic,
         verified_evidence
     )
 
+    # --------------------------------------------------------
     # Save Markdown
+    # --------------------------------------------------------
+
     markdown_file = save_markdown(
         topic,
         report
     )
 
+    # --------------------------------------------------------
     # Save PDF
+    # --------------------------------------------------------
+
     pdf_file = save_pdf(
         topic,
         report
@@ -269,6 +307,11 @@ workflow.add_node(
 )
 
 workflow.add_node(
+    "evidence_cleaner",
+    evidence_cleaner_node
+)
+
+workflow.add_node(
     "citation_checker",
     citation_checker_node
 )
@@ -300,6 +343,11 @@ workflow.add_edge(
 
 workflow.add_edge(
     "researcher",
+    "evidence_cleaner"
+)
+
+workflow.add_edge(
+    "evidence_cleaner",
     "citation_checker"
 )
 
@@ -319,4 +367,3 @@ workflow.add_edge(
 # ============================================================
 
 research_graph = workflow.compile()
-

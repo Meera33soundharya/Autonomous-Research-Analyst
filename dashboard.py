@@ -1,940 +1,441 @@
-import sys
-from pathlib import Path
-
-import streamlit as st
-from dotenv import load_dotenv
+from datetime import date, datetime, timedelta
+from html import escape
+from typing import Any
 
 
-# ============================================================
-# PROJECT / BACKEND SETUP
-# ============================================================
-
-PROJECT_ROOT = Path(__file__).resolve().parent
-BACKEND_DIR = PROJECT_ROOT / "backend"
-
-sys.path.insert(0, str(BACKEND_DIR))
-load_dotenv(BACKEND_DIR / ".env")
-
-from app.graph.workflow import research_graph
-
-
-# ============================================================
-# PAGE CONFIG
-# ============================================================
-
-st.set_page_config(
-    page_title="Research Intelligence Platform",
-    page_icon="R",
-    layout="wide",
-    initial_sidebar_state="expanded",
+AGENTS = (
+    ("planner", "Planner", "Creates focused research questions"),
+    ("searcher", "Searcher", "Collects relevant web sources"),
+    ("researcher", "Researcher", "Extracts evidence-backed claims"),
+    ("evidence_cleaner", "Evidence Cleaner", "Cleans and deduplicates claims"),
+    ("citation_checker", "Citation Checker", "Checks claims against sources"),
+    ("writer", "Writer", "Produces the final research report"),
 )
 
-
-# ============================================================
-# PROFESSIONAL CSS
-# ============================================================
-
-st.markdown(
-    """
-    <style>
-
-    /* ---------- GLOBAL ---------- */
-
-    .stApp {
-        background: #f6f8fc;
-    }
-
-    .main .block-container {
-        max-width: 1450px;
-        padding-top: 2rem;
-        padding-bottom: 3rem;
-    }
-
-    /* ---------- HEADER ---------- */
-
-    .hero {
-        background: linear-gradient(
-            135deg,
-            #0f172a 0%,
-            #1e3a8a 55%,
-            #2563eb 100%
-        );
-        padding: 32px;
-        border-radius: 18px;
-        color: white;
-        margin-bottom: 24px;
-    }
-
-    .hero-title {
-        font-size: 34px;
-        font-weight: 700;
-        margin-bottom: 6px;
-    }
-
-    .hero-subtitle {
-        font-size: 15px;
-        color: #dbeafe;
-        margin-bottom: 0;
-    }
-
-    /* ---------- SECTION TITLE ---------- */
-
-    .section-title {
-        font-size: 21px;
-        font-weight: 700;
-        color: #0f172a;
-        margin-top: 10px;
-        margin-bottom: 14px;
-    }
-
-    .section-subtitle {
-        font-size: 13px;
-        color: #64748b;
-        margin-top: -8px;
-        margin-bottom: 15px;
-    }
-
-    /* ---------- INPUT ---------- */
-
-    .input-card {
-        background: white;
-        border: 1px solid #e2e8f0;
-        border-radius: 16px;
-        padding: 22px;
-        margin-bottom: 20px;
-    }
-
-    /* ---------- METRIC CARDS ---------- */
-
-    .metric-card {
-        background: white;
-        border: 1px solid #e2e8f0;
-        border-radius: 16px;
-        padding: 20px;
-        min-height: 120px;
-    }
-
-    .metric-label {
-        color: #64748b;
-        font-size: 13px;
-        margin-bottom: 7px;
-    }
-
-    .metric-value {
-        color: #0f172a;
-        font-size: 29px;
-        font-weight: 700;
-    }
-
-    /* ---------- PIPELINE ---------- */
-
-    .pipeline-card {
-        background: white;
-        border: 1px solid #e2e8f0;
-        border-radius: 14px;
-        padding: 16px;
-        min-height: 110px;
-        text-align: center;
-    }
-
-    .pipeline-name {
-        color: #0f172a;
-        font-weight: 650;
-        font-size: 14px;
-        margin-top: 7px;
-    }
-
-    .pipeline-status {
-        color: #16a34a;
-        font-size: 12px;
-        margin-top: 5px;
-    }
-
-    .pipeline-arrow {
-        text-align: center;
-        color: #94a3b8;
-        font-size: 22px;
-        padding-top: 35px;
-    }
-
-    /* ---------- QUESTION CARDS ---------- */
-
-    .question-card {
-        background: white;
-        border: 1px solid #e2e8f0;
-        border-radius: 14px;
-        padding: 16px;
-        margin-bottom: 10px;
-    }
-
-    .question-number {
-        color: #2563eb;
-        font-weight: 700;
-        font-size: 13px;
-        margin-bottom: 5px;
-    }
-
-    .question-text {
-        color: #0f172a;
-        font-size: 14px;
-        line-height: 1.55;
-    }
-
-    /* ---------- EVIDENCE ---------- */
-
-    .evidence-card {
-        background: white;
-        border: 1px solid #e2e8f0;
-        border-radius: 14px;
-        padding: 18px;
-        margin-bottom: 12px;
-    }
-
-    .evidence-label {
-        color: #64748b;
-        font-size: 12px;
-        text-transform: uppercase;
-        letter-spacing: 0.4px;
-    }
-
-    .evidence-claim {
-        color: #0f172a;
-        font-size: 14px;
-        line-height: 1.6;
-        margin-top: 5px;
-    }
-
-    .source-name {
-        color: #475569;
-        font-size: 13px;
-        margin-top: 9px;
-    }
-
-    /* ---------- STATUS BADGES ---------- */
-
-    .badge-supported {
-        background: #dcfce7;
-        color: #166534;
-        border-radius: 999px;
-        padding: 4px 10px;
-        font-size: 11px;
-        font-weight: 700;
-        display: inline-block;
-    }
-
-    .badge-partial {
-        background: #fef3c7;
-        color: #92400e;
-        border-radius: 999px;
-        padding: 4px 10px;
-        font-size: 11px;
-        font-weight: 700;
-        display: inline-block;
-    }
-
-    .badge-unsupported {
-        background: #fee2e2;
-        color: #991b1b;
-        border-radius: 999px;
-        padding: 4px 10px;
-        font-size: 11px;
-        font-weight: 700;
-        display: inline-block;
-    }
-
-    /* ---------- SOURCE CARDS ---------- */
-
-    .source-card {
-        background: white;
-        border: 1px solid #e2e8f0;
-        border-radius: 14px;
-        padding: 16px;
-        margin-bottom: 10px;
-    }
-
-    .source-title {
-        color: #0f172a;
-        font-size: 14px;
-        font-weight: 650;
-    }
-
-    .source-url {
-        color: #2563eb;
-        font-size: 12px;
-        word-break: break-all;
-        margin-top: 6px;
-    }
-
-    /* ---------- SIDEBAR ---------- */
-
-    section[data-testid="stSidebar"] {
-        background: #0f172a;
-    }
-
-    section[data-testid="stSidebar"] * {
-        color: #e2e8f0;
-    }
-
-    /* ---------- BUTTON ---------- */
-
-    .stButton > button {
-        border-radius: 10px;
-        min-height: 44px;
-        font-weight: 650;
-    }
-
-    /* ---------- REPORT ---------- */
-
-    .report-shell {
-        background: white;
-        border: 1px solid #e2e8f0;
-        border-radius: 16px;
-        padding: 28px;
-    }
-
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-
-# ============================================================
-# SIDEBAR
-# ============================================================
-
-with st.sidebar:
-
-    st.markdown(
-        """
-        <div style="font-size:20px;font-weight:700;">
-        Research Intelligence
-        </div>
-        <div style="font-size:12px;color:#94a3b8;margin-top:5px;">
-        Autonomous multi-agent research platform
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.divider()
-
-    st.markdown("### System")
-
-    st.success("Backend Connected")
-
-    st.markdown(
-        """
-        <div style="font-size:13px;line-height:1.9;">
-        Planner Agent<br>
-        Searcher Agent<br>
-        Researcher Agent<br>
-        Evidence Cleaner<br>
-        Citation Checker<br>
-        Writer Agent
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.divider()
-
-    st.caption("Powered by FastAPI, LangGraph, OpenRouter and Tavily")
-
-
-# ============================================================
-# HEADER
-# ============================================================
-
-st.markdown(
-    """
-    <div class="hero">
-        <div class="hero-title">
-            Research Intelligence Platform
-        </div>
-        <div class="hero-subtitle">
-            Autonomous multi-agent research, evidence verification,
-            citation analysis and report generation.
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-
-# ============================================================
-# TOPIC INPUT
-# ============================================================
-
-st.markdown(
-    '<div class="section-title">Research Workspace</div>',
-    unsafe_allow_html=True,
-)
-
-st.markdown(
-    '<div class="section-subtitle">'
-    'Enter any topic and let the agent build the research workflow automatically.'
-    '</div>',
-    unsafe_allow_html=True,
-)
-
-topic = st.text_area(
-    "Research Topic",
-    placeholder="Example: Artificial Intelligence in Banking",
-    height=90,
-    label_visibility="collapsed",
-)
-
-start_research = st.button(
-    "Start Autonomous Research",
-    type="primary",
-    use_container_width=True,
-)
-
-
-# ============================================================
-# EXECUTE WORKFLOW
-# ============================================================
-
-if start_research:
-
-    if not topic.strip():
-        st.warning("Please enter a research topic.")
-        st.stop()
-
-    topic_clean = topic.strip()
-
-    with st.spinner(
-        "Running Planner -> Searcher -> Researcher -> "
-        "Evidence Cleaner -> Citation Checker -> Writer..."
-    ):
-
-        try:
-
-            result = research_graph.invoke(
-                {"topic": topic_clean}
+AGENT_KEYS = tuple(agent[0] for agent in AGENTS)
+
+DOCUMENT_STYLE = """
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{color-scheme:dark;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;background:transparent;color:#e8eefc;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+body{font-size:13px;line-height:1.5}
+.panel{background:#131b30;border:1px solid #242f4d;border-radius:12px;padding:18px}
+.panel-title{font-size:14px;font-weight:700;color:#e8eefc}
+.panel-subtitle{font-size:12px;color:#a8b4cf;margin-top:2px}
+.grid-4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+.grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:16px}
+.kpi{min-width:0}
+.kpi-label{font-size:12px;color:#a8b4cf}
+.kpi-value{font-size:28px;line-height:1.2;font-weight:700;letter-spacing:-.03em;margin-top:8px}
+.kpi-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px;color:#a8b4cf;font-size:11px}
+.spark{width:76px;height:24px;flex:none}
+.chart{width:100%;height:auto;display:block;margin-top:10px;overflow:visible}
+.chart text{fill:#a8b4cf;font-size:11px;font-family:inherit}
+.chart .gridline{stroke:#242f4d;stroke-width:1}
+.chart .bar{fill:#6b8cff}
+.chart .bar-last{fill:#87a0ff}
+.agents{display:grid;gap:0;margin-top:10px}
+.agent{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 0;border-top:1px solid #242f4d}
+.agent:first-child{border-top:0}
+.agent-name{font-size:12px;font-weight:650;color:#e8eefc}
+.agent-detail{font-size:11px;color:#a8b4cf;margin-top:2px}
+.pill{display:inline-flex;align-items:center;white-space:nowrap;border-radius:999px;border:1px solid #52617f;padding:3px 9px;font-size:10px;font-weight:700;color:#c4cde0;background:#202b43}
+.pill.Completed{color:#3ddc97;border-color:#287e63;background:#143629}
+.pill.Running{color:#9db2ff;border-color:#465b9a;background:#202c53}
+.pill.Failed{color:#ff8da0;border-color:#a3495c;background:#442330}
+.pill.Waiting{color:#b8c2d8;border-color:#52617f;background:#202b43}
+.table-wrap{width:100%;overflow-x:auto;margin-top:14px}
+table{width:100%;min-width:680px;border-collapse:collapse;text-align:left}
+th{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:#a8b4cf;font-weight:650;padding:9px 10px;border-bottom:1px solid #34405d}
+td{font-size:11px;color:#e8eefc;padding:11px 10px;border-bottom:1px solid #242f4d;white-space:nowrap}
+td.topic{white-space:normal;min-width:140px;max-width:280px}
+.muted{color:#a8b4cf}
+.empty{border:1px dashed #52617f;border-radius:10px;padding:20px;text-align:center;color:#b8c2d8;margin-top:14px}
+.donut-row{display:flex;align-items:center;gap:24px;margin-top:18px;min-height:160px}
+.donut{width:144px;height:144px;flex:none;border-radius:50%;display:grid;place-items:center;position:relative}
+.donut:after{content:"";position:absolute;inset:17px;background:#131b30;border-radius:50%}
+.donut-center{z-index:1;text-align:center}
+.donut-center strong{display:block;color:#e8eefc;font-size:22px}
+.donut-center span{font-size:10px;color:#b8c2d8}
+.legend{display:grid;gap:10px}
+.legend-item{display:grid;grid-template-columns:9px minmax(70px,1fr) auto;gap:8px;align-items:center;color:#b8c2d8;font-size:11px}
+.dot{width:8px;height:8px;border-radius:50%}
+.supported{background:#3ddc97}
+.partial{background:#ffb938}
+.unsupported{background:#ff6b85}
+.error{border:1px solid #a3495c;background:#301c2a;border-radius:12px;padding:16px 18px;color:#ffd7de;white-space:pre-wrap;overflow-wrap:anywhere}
+.error-title{font-weight:750;color:#ff8da0;margin-bottom:5px}
+.live-topic{font-size:16px;font-weight:700;color:#e8eefc}
+.live-caption{font-size:12px;color:#b8c2d8;margin-top:4px}
+:focus-visible{outline:3px solid #9db2ff;outline-offset:3px}
+@media(max-width:900px){.grid-4{grid-template-columns:repeat(2,minmax(0,1fr))}.grid-2{grid-template-columns:1fr}}
+@media(max-width:520px){.grid-4{grid-template-columns:1fr}.panel{padding:14px}.donut-row{gap:14px;flex-wrap:wrap}}
+</style>
+"""
+
+
+def _document(content: str) -> str:
+    return f"<!doctype html><html><head>{DOCUMENT_STYLE}</head><body>{content}</body></html>"
+
+
+def _safe(value: Any) -> str:
+    return escape(str(value if value is not None else ""), quote=True)
+
+
+def _get(run: dict[str, Any], key: str, fallback: Any = None) -> Any:
+    value = run.get(key, fallback)
+    return fallback if value is None else value
+
+
+def _parse_date(run: dict[str, Any]) -> date | None:
+    value = run.get("created") or run.get("date")
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).date()
+    except (TypeError, ValueError):
+        return None
+
+
+def _relative_date(run: dict[str, Any]) -> str:
+    created = _parse_date(run)
+    if created is None:
+        return "Date unavailable"
+    days = (date.today() - created).days
+    if days <= 0:
+        return "Today"
+    if days == 1:
+        return "Yesterday"
+    return f"{days} days ago"
+
+
+def get_questions(state: dict[str, Any]) -> list[str]:
+    questions = state.get("research_questions") or state.get("questions") or []
+    return [str(question) for question in questions if question is not None]
+
+
+def get_sources(state: dict[str, Any]) -> list[dict[str, Any]]:
+    sources = state.get("search_results") or state.get("sources") or []
+    return [source for source in sources if isinstance(source, dict)]
+
+
+def get_claims(state: dict[str, Any]) -> list[dict[str, Any]]:
+    claims = state.get("claims") or []
+    if claims:
+        return [claim for claim in claims if isinstance(claim, dict)]
+    flattened: list[dict[str, Any]] = []
+    for group in state.get("verified_evidence") or []:
+        if isinstance(group, dict):
+            flattened.extend(
+                finding
+                for finding in group.get("findings", [])
+                if isinstance(finding, dict)
             )
-
-            st.session_state["research_result"] = result
-
-        except Exception as error:
-
-            st.error("Research workflow failed.")
-            st.exception(error)
-            st.stop()
+    return flattened
 
 
-# ============================================================
-# SHOW RESULT
-# ============================================================
+def get_verdict(claim: dict[str, Any]) -> str:
+    raw = str(claim.get("status") or claim.get("verdict") or "").strip().lower()
+    if raw in {"supported", "supported."}:
+        return "Supported"
+    if raw in {
+        "partial",
+        "partially_supported",
+        "partially supported",
+        "partially_supported.",
+    }:
+        return "Partial"
+    if raw in {"unsupported", "unsupported."}:
+        return "Unsupported"
+    return "Unverified"
 
-if "research_result" in st.session_state:
 
-    result = st.session_state["research_result"]
+def count_verdicts(claims: list[dict[str, Any]]) -> tuple[int, int, int]:
+    supported = sum(get_verdict(claim) == "Supported" for claim in claims)
+    partial = sum(get_verdict(claim) == "Partial" for claim in claims)
+    unsupported = sum(get_verdict(claim) == "Unsupported" for claim in claims)
+    return supported, partial, unsupported
 
-    current_topic = result.get(
-        "topic",
-        topic if topic else "Research Topic"
-    )
 
-    questions = result.get(
-        "research_questions",
-        []
-    )
-
-    search_results = result.get(
-        "search_results",
-        []
-    )
-
-    verified_evidence = result.get(
-        "verified_evidence",
-        []
-    )
-
-    report = result.get(
-        "report",
-        ""
-    )
-
-    # --------------------------------------------------------
-    # SUCCESS
-    # --------------------------------------------------------
-
-    st.success(
-        f"Research completed successfully for: {current_topic}"
-    )
-
-    # --------------------------------------------------------
-    # METRICS
-    # --------------------------------------------------------
-
-    supported = 0
-    partial = 0
-    unsupported = 0
-    total_findings = 0
-
-    for group in verified_evidence:
-
-        for finding in group.get("findings", []):
-
-            total_findings += 1
-
-            status = finding.get("status", "")
-
-            if status == "SUPPORTED":
-                supported += 1
-
-            elif status == "PARTIALLY_SUPPORTED":
-                partial += 1
-
-            elif status == "UNSUPPORTED":
-                unsupported += 1
-
-    st.markdown(
-        '<div class="section-title">Research Overview</div>',
-        unsafe_allow_html=True,
-    )
-
-    m1, m2, m3, m4 = st.columns(4)
-
-    with m1:
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-label">Research Questions</div>
-                <div class="metric-value">{len(questions)}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with m2:
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-label">Web Sources</div>
-                <div class="metric-value">{len(search_results)}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with m3:
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-label">Supported Findings</div>
-                <div class="metric-value">{supported}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with m4:
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-label">Total Findings</div>
-                <div class="metric-value">{total_findings}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    st.write("")
-
-    # --------------------------------------------------------
-    # PIPELINE
-    # --------------------------------------------------------
-
-    st.markdown(
-        '<div class="section-title">Autonomous Research Pipeline</div>',
-        unsafe_allow_html=True,
-    )
-
-    pipeline = [
-        "Planner",
-        "Searcher",
-        "Researcher",
-        "Evidence Cleaner",
-        "Citation Checker",
-        "Writer",
+def claims_table_rows(claims: list[dict[str, Any]]) -> list[dict[str, str]]:
+    return [
+        {
+            "Claim": str(claim.get("claim") or claim.get("finding") or ""),
+            "Status": get_verdict(claim),
+            "Source": str(claim.get("source_title") or claim.get("source") or ""),
+            "Source URL": str(claim.get("source_url") or ""),
+        }
+        for claim in claims
     ]
 
-    cols = st.columns(len(pipeline))
 
-    for index, name in enumerate(pipeline):
+def sources_table_rows(sources: list[dict[str, Any]]) -> list[dict[str, str]]:
+    return [
+        {
+            "Title": str(source.get("title") or "Untitled source"),
+            "URL": str(source.get("url") or ""),
+            "Type": str(source.get("source_type") or ""),
+            "Year": str(source.get("year") or ""),
+        }
+        for source in sources
+    ]
 
-        with cols[index]:
 
-            st.markdown(
-                f"""
-                <div class="pipeline-card">
-                    <div style="font-size:22px;color:#2563eb;">
-                        {index + 1}
-                    </div>
-                    <div class="pipeline-name">
-                        {name}
-                    </div>
-                    <div class="pipeline-status">
-                        Completed
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+def _status_class(status: Any) -> str:
+    normalized = str(status or "Waiting").title()
+    return normalized if normalized in {"Waiting", "Running", "Completed", "Failed"} else "Waiting"
 
-    st.write("")
 
-    # --------------------------------------------------------
-    # TABS
-    # --------------------------------------------------------
+def _agent_rows(statuses: dict[str, str]) -> str:
+    rows: list[str] = []
+    for key, name, description in AGENTS:
+        status = _status_class(statuses.get(key, "Waiting"))
+        rows.append(
+            f'<div class="agent"><div><div class="agent-name">{_safe(name)}</div>'
+            f'<div class="agent-detail">{_safe(description)}</div></div>'
+            f'<span class="pill {status}" aria-label="Status: {status}">{status}</span></div>'
+        )
+    return "".join(rows)
 
-    tab_overview, tab_questions, tab_evidence, tab_report, tab_sources = st.tabs(
-        [
-            "Overview",
-            "Research Questions",
-            "Verified Evidence",
-            "Final Report",
-            "Sources",
-        ]
+
+def agent_panel_html(
+    statuses: dict[str, str],
+    title: str = "Active pipeline",
+    subtitle: str = "Live agent status",
+) -> str:
+    content = (
+        '<section class="panel"><div class="panel-title">'
+        f"{_safe(title)}</div><div class=\"panel-subtitle\">{_safe(subtitle)}</div>"
+        f'<div class="agents">{_agent_rows(statuses)}</div></section>'
+    )
+    return _document(content)
+
+
+def error_card_html(message: str, title: str = "Research run failed") -> str:
+    content = (
+        '<section class="error" role="alert"><div class="error-title">'
+        f"{_safe(title)}</div><div>{_safe(message)}</div></section>"
+    )
+    return _document(content)
+
+
+def empty_state_html(title: str, description: str) -> str:
+    content = (
+        f'<div class="empty"><strong>{_safe(title)}</strong>'
+        f'<div class="muted">{_safe(description)}</div></div>'
+    )
+    return _document(content)
+
+
+def live_header_html(topic: str, stage: str, elapsed_seconds: float) -> str:
+    content = (
+        '<section class="panel"><div class="live-topic">'
+        f"{_safe(topic)}</div><div class=\"live-caption\">"
+        f"Running · {_safe(stage)} · {elapsed_seconds:.1f}s elapsed</div></section>"
+    )
+    return _document(content)
+
+
+def _sparkline(values: list[float], color: str = "#6b8cff") -> str:
+    if not values:
+        return ""
+    width, height = 76, 24
+    low, high = min(values), max(values)
+    spread = high - low or 1
+    points = []
+    for index, value in enumerate(values):
+        x = 2 + index * (width - 4) / max(1, len(values) - 1)
+        y = height - 3 - ((value - low) / spread) * (height - 7)
+        points.append(f"{x:.1f},{y:.1f}")
+    return (
+        f'<svg class="spark" viewBox="0 0 {width} {height}" role="img" '
+        f'aria-label="Seven day trend"><polyline fill="none" stroke="{color}" '
+        f'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+        f'points="{" ".join(points)}"/></svg>'
     )
 
-    # ========================================================
-    # OVERVIEW
-    # ========================================================
 
-    with tab_overview:
-
-        st.markdown(
-            '<div class="section-title">Research Status</div>',
-            unsafe_allow_html=True,
-        )
-
-        c1, c2, c3 = st.columns(3)
-
-        with c1:
-            st.metric("Supported", supported)
-
-        with c2:
-            st.metric("Partially Supported", partial)
-
-        with c3:
-            st.metric("Unsupported", unsupported)
-
-        st.divider()
-
-        st.markdown(
-            f"""
-            <div class="report-shell">
-                <h3 style="margin-top:0;color:#0f172a;">
-                    Research Topic
-                </h3>
-                <p style="color:#475569;font-size:15px;">
-                    {current_topic}
-                </p>
-                <p style="color:#64748b;font-size:13px;">
-                    The system dynamically planned research questions,
-                    collected web sources, extracted evidence, verified
-                    citations and generated the final report.
-                </p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    # ========================================================
-    # QUESTIONS
-    # ========================================================
-
-    with tab_questions:
-
-        st.markdown(
-            '<div class="section-title">Generated Research Questions</div>',
-            unsafe_allow_html=True,
-        )
-
-        for index, question in enumerate(
-            questions,
-            1
-        ):
-
-            st.markdown(
-                f"""
-                <div class="question-card">
-                    <div class="question-number">
-                        QUESTION {index}
-                    </div>
-                    <div class="question-text">
-                        {question}
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-    # ========================================================
-    # EVIDENCE
-    # ========================================================
-
-    with tab_evidence:
-
-        st.markdown(
-            '<div class="section-title">Evidence Verification</div>',
-            unsafe_allow_html=True,
-        )
-
-        for group in verified_evidence:
-
-            group_question = group.get(
-                "question",
-                "Research Question"
-            )
-
-            st.markdown(
-                f"""
-                <div style="
-                    font-size:16px;
-                    font-weight:700;
-                    color:#0f172a;
-                    margin-top:10px;
-                    margin-bottom:12px;
-                ">
-                    {group_question}
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-            for finding in group.get(
-                "findings",
-                []
-            ):
-
-                claim = finding.get(
-                    "claim",
-                    "No claim available."
-                )
-
-                source = finding.get(
-                    "source",
-                    finding.get(
-                        "source_title",
-                        "Unknown Source"
+def _trend_values(runs: list[dict[str, Any]], measure: str) -> list[float]:
+    days = [date.today() - timedelta(days=6 - index) for index in range(7)]
+    values: list[float] = []
+    for day in days:
+        matching = [run for run in runs if _parse_date(run) == day]
+        if measure == "reports":
+            values.append(float(sum(bool(run.get("report")) for run in matching)))
+        elif measure == "sources":
+            values.append(float(sum(int(run.get("n_sources", 0) or 0) for run in matching)))
+        elif measure == "claims":
+            values.append(
+                float(
+                    sum(
+                        int(run.get("supported", 0) or 0)
+                        + int(run.get("partial", 0) or 0)
+                        + int(run.get("unsupported", 0) or 0)
+                        for run in matching
                     )
                 )
-
-                status = finding.get(
-                    "status",
-                    "UNSUPPORTED"
-                )
-
-                if status == "SUPPORTED":
-
-                    badge = (
-                        '<span class="badge-supported">'
-                        'SUPPORTED'
-                        '</span>'
-                    )
-
-                elif status == "PARTIALLY_SUPPORTED":
-
-                    badge = (
-                        '<span class="badge-partial">'
-                        'PARTIALLY SUPPORTED'
-                        '</span>'
-                    )
-
-                else:
-
-                    badge = (
-                        '<span class="badge-unsupported">'
-                        'UNSUPPORTED'
-                        '</span>'
-                    )
-
-                st.markdown(
-                    f"""
-                    <div class="evidence-card">
-
-                        <div class="evidence-label">
-                            Claim
-                        </div>
-
-                        <div class="evidence-claim">
-                            {claim}
-                        </div>
-
-                        <div class="source-name">
-                            Source: {source}
-                        </div>
-
-                        <div style="margin-top:10px;">
-                            {badge}
-                        </div>
-
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-    # ========================================================
-    # FINAL REPORT
-    # ========================================================
-
-    with tab_report:
-
-        st.markdown(
-            '<div class="section-title">Final Research Report</div>',
-            unsafe_allow_html=True,
-        )
-
-        if report:
-
-            st.markdown(
-                '<div class="report-shell">',
-                unsafe_allow_html=True,
             )
-
-            st.markdown(report)
-
-            st.markdown(
-                '</div>',
-                unsafe_allow_html=True,
-            )
-
         else:
+            accuracies = [
+                float(run["accuracy"])
+                for run in matching
+                if run.get("accuracy") is not None
+            ]
+            values.append(sum(accuracies) / len(accuracies) if accuracies else 0.0)
+    return values
 
-            st.warning(
-                "No report was generated."
-            )
 
-    # ========================================================
-    # SOURCES
-    # ========================================================
+def _runs_chart(runs: list[dict[str, Any]]) -> str:
+    days = [date.today() - timedelta(days=6 - index) for index in range(7)]
+    counts = [
+        sum(_parse_date(run) == day for run in runs)
+        for day in days
+    ]
+    maximum = max(counts, default=0)
+    top = max(1, maximum)
+    chart_width, chart_height = 560, 190
+    left, right, baseline, chart_top = 38, 548, 145, 18
+    chart_range = baseline - chart_top
+    grid_values = sorted({0, (top + 1) // 2, top})
+    grid = "".join(
+        f'<line class="gridline" x1="{left}" x2="{right}" y1="{baseline - value / top * chart_range:.1f}" '
+        f'y2="{baseline - value / top * chart_range:.1f}"/>'
+        f'<text x="{left - 8}" y="{baseline - value / top * chart_range + 4:.1f}" text-anchor="end">{value}</text>'
+        for value in grid_values
+    )
+    bars: list[str] = []
+    slot = (right - left) / len(days)
+    bar_width = min(42, slot * 0.58)
+    for index, (day, count) in enumerate(zip(days, counts)):
+        height = count / top * chart_range if count else 0
+        x = left + index * slot + (slot - bar_width) / 2
+        y = baseline - height
+        cls = "bar-last" if index == len(days) - 1 else "bar"
+        bars.append(
+            f'<rect class="{cls}" x="{x:.1f}" y="{y:.1f}" width="{bar_width:.1f}" '
+            f'height="{max(0, height):.1f}" rx="5"><title>{count} runs on '
+            f'{day.isoformat()}</title></rect>'
+            f'<text x="{x + bar_width / 2:.1f}" y="169" text-anchor="middle">'
+            f'{_safe(day.strftime("%a"))}</text>'
+        )
+    return (
+        f'<svg class="chart" viewBox="0 0 {chart_width} {chart_height}" role="img" '
+        f'aria-label="Research runs per day for the last seven days">'
+        f"{grid}{''.join(bars)}</svg>"
+    )
 
-    with tab_sources:
 
-        st.markdown(
-            '<div class="section-title">Web Research Sources</div>',
-            unsafe_allow_html=True,
+def _run_status(run: dict[str, Any]) -> str:
+    return _status_class(run.get("status", "Completed"))
+
+
+def _recent_table(runs: list[dict[str, Any]]) -> str:
+    if not runs:
+        return (
+            '<div class="empty"><strong>No research runs yet</strong>'
+            '<div class="muted">Start a research run to see activity here.</div></div>'
+        )
+    rows: list[str] = []
+    for run in runs[:8]:
+        accuracy = run.get("accuracy")
+        accuracy_text = f"{_safe(accuracy)}%" if accuracy is not None else "—"
+        status = _run_status(run)
+        duration = float(run.get("seconds", 0) or 0)
+        rows.append(
+            "<tr>"
+            f'<td class="topic">{_safe(run.get("topic", "Research"))}</td>'
+            f'<td><span class="pill {status}">{status}</span></td>'
+            f'<td>{int(run.get("n_sources", 0) or 0)}</td>'
+            f'<td>{int(run.get("n_claims", 0) or 0)}</td>'
+            f"<td>{accuracy_text}</td>"
+            f"<td>{duration:.1f}s</td>"
+            f"<td>{_safe(_relative_date(run))}</td>"
+            "</tr>"
+        )
+    return (
+        '<div class="table-wrap"><table><thead><tr><th>Topic</th><th>Status</th>'
+        "<th>Sources</th><th>Claims</th><th>Accuracy</th><th>Duration</th><th>Date</th>"
+        f"</tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
+    )
+
+
+def _donut(supported: int, partial: int, unsupported: int) -> str:
+    total = supported + partial + unsupported
+    if total:
+        supported_end = supported / total * 100
+        partial_end = supported_end + partial / total * 100
+        ring = (
+            "conic-gradient(#3ddc97 0 "
+            f"{supported_end:.3f}%,#ffb938 {supported_end:.3f}% "
+            f"{partial_end:.3f}%,#ff6b85 {partial_end:.3f}% 100%)"
+        )
+        center = f"{round(supported_end)}%"
+        detail = "supported"
+    else:
+        ring = "#242f4d"
+        center = "—"
+        detail = "no claims"
+    return (
+        '<div class="donut-row"><div class="donut" role="img" '
+        f'aria-label="Claim verification: {supported} supported, {partial} partial, '
+        f'{unsupported} unsupported" style="background:{ring}">'
+        f'<div class="donut-center"><strong>{center}</strong><span>{detail}</span></div></div>'
+        '<div class="legend">'
+        f'<div class="legend-item"><span class="dot supported"></span><span>Supported</span><strong>{supported}</strong></div>'
+        f'<div class="legend-item"><span class="dot partial"></span><span>Partial</span><strong>{partial}</strong></div>'
+        f'<div class="legend-item"><span class="dot unsupported"></span><span>Unsupported</span><strong>{unsupported}</strong></div>'
+        "</div></div>"
+    )
+
+
+def dashboard_html(
+    runs: list[dict[str, Any]],
+    active_statuses: dict[str, str] | None = None,
+) -> str:
+    active_statuses = active_statuses or {}
+    completed_runs = [run for run in runs if run.get("status") != "Failed"]
+    reports = sum(bool(run.get("report")) for run in runs)
+    sources = sum(int(run.get("n_sources", 0) or 0) for run in completed_runs)
+    supported = sum(int(run.get("supported", 0) or 0) for run in completed_runs)
+    partial = sum(int(run.get("partial", 0) or 0) for run in completed_runs)
+    unsupported = sum(int(run.get("unsupported", 0) or 0) for run in completed_runs)
+    verified = supported + partial + unsupported
+    accuracy = f"{round(100 * supported / verified)}%" if verified else "—"
+
+    cards = (
+        ("Reports generated", str(reports), "reports", f"{reports} saved reports"),
+        ("Sources collected", str(sources), "sources", f"{sources} sources in completed runs"),
+        ("Claims verified", str(verified), "claims", f"{verified} claims with a verdict"),
+        ("Citation accuracy", accuracy, "accuracy", "Supported share of verified claims"),
+    )
+    kpi_markup: list[str] = []
+    for label, value, metric, note in cards:
+        kpi_markup.append(
+            f'<section class="panel kpi"><div class="kpi-label">{_safe(label)}</div>'
+            f'<div class="kpi-value">{_safe(value)}</div><div class="kpi-foot">'
+            f'<span>{_safe(note)}</span>{_sparkline(_trend_values(runs, metric))}</div></section>'
         )
 
-        seen_urls = set()
+    if not active_statuses:
+        active_statuses = runs[0].get("agents", {}) if runs else {}
+    if not active_statuses:
+        active_statuses = {key: "Waiting" for key in AGENT_KEYS}
 
-        for index, source in enumerate(
-            search_results,
-            1
-        ):
-
-            title = source.get(
-                "title",
-                "Untitled Source"
-            )
-
-            url = source.get(
-                "url",
-                ""
-            )
-
-            question = source.get(
-                "question",
-                ""
-            )
-
-            if url in seen_urls:
-                continue
-
-            seen_urls.add(url)
-
-            st.markdown(
-                f"""
-                <div class="source-card">
-
-                    <div class="source-title">
-                        {index}. {title}
-                    </div>
-
-                    <div class="source-url">
-                        {url}
-                    </div>
-
-                    <div style="
-                        color:#64748b;
-                        font-size:12px;
-                        margin-top:8px;
-                    ">
-                        Research Question: {question}
-                    </div>
-
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-    # ========================================================
-    # DOWNLOADS
-    # ========================================================
-
-    st.divider()
-
-    st.markdown(
-        '<div class="section-title">Download Reports</div>',
-        unsafe_allow_html=True,
+    content = (
+        f'<div class="grid-4">{"".join(kpi_markup)}</div>'
+        '<div class="grid-2"><section class="panel"><div class="panel-title">Research runs per day</div>'
+        '<div class="panel-subtitle">Last seven days</div>'
+        f'{_runs_chart(runs)}</section>'
+        '<section class="panel"><div class="panel-title">Active pipeline</div>'
+        '<div class="panel-subtitle">Most recent run</div>'
+        f'<div class="agents">{_agent_rows(active_statuses)}</div></section></div>'
+        '<div class="grid-2"><section class="panel"><div class="panel-title">Recent research</div>'
+        '<div class="panel-subtitle">Latest saved runs</div>'
+        f'{_recent_table(runs)}</section>'
+        '<section class="panel"><div class="panel-title">Claim verification</div>'
+        '<div class="panel-subtitle">Completed runs</div>'
+        f'{_donut(supported, partial, unsupported)}</section></div>'
     )
-
-    markdown_file = result.get(
-        "markdown_file"
-    )
-
-    pdf_file = result.get(
-        "pdf_file"
-    )
-
-    d1, d2 = st.columns(2)
-
-    with d1:
-
-        if markdown_file:
-
-            markdown_path = Path(
-                markdown_file
-            )
-
-            if markdown_path.exists():
-
-                with open(
-                    markdown_path,
-                    "rb"
-                ) as file:
-
-                    st.download_button(
-                        "Download Markdown Report",
-                        file.read(),
-                        file_name="research_report.md",
-                        mime="text/markdown",
-                        use_container_width=True,
-                    )
-
-    with d2:
-
-        if pdf_file:
-
-            pdf_path = Path(
-                pdf_file
-            )
-
-            if pdf_path.exists():
-
-                with open(
-                    pdf_path,
-                    "rb"
-                ) as file:
-
-                    st.download_button(
-                        "Download PDF Report",
-                        file.read(),
-                        file_name="research_report.pdf",
-                        mime="application/pdf",
-                        use_container_width=True,
-                    )
+    return _document(content)
