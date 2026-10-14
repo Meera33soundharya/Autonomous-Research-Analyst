@@ -45,6 +45,7 @@ body{font-size:13px;line-height:1.5}
 .pill.Completed{color:#3ddc97;border-color:#287e63;background:#143629}
 .pill.Running{color:#9db2ff;border-color:#465b9a;background:#202c53}
 .pill.Failed{color:#ff8da0;border-color:#a3495c;background:#442330}
+.pill.Incomplete{color:#ffcf79;border-color:#92713b;background:#3b3020}
 .pill.Waiting{color:#b8c2d8;border-color:#52617f;background:#202b43}
 .table-wrap{width:100%;overflow-x:auto;margin-top:14px}
 table{width:100%;min-width:680px;border-collapse:collapse;text-align:left}
@@ -185,7 +186,7 @@ def sources_table_rows(sources: list[dict[str, Any]]) -> list[dict[str, str]]:
 
 def _status_class(status: Any) -> str:
     normalized = str(status or "Waiting").title()
-    return normalized if normalized in {"Waiting", "Running", "Completed", "Failed"} else "Waiting"
+    return normalized if normalized in {"Waiting", "Running", "Completed", "Incomplete", "Failed"} else "Waiting"
 
 
 def _agent_rows(statuses: dict[str, str]) -> str:
@@ -340,7 +341,8 @@ def _recent_table(runs: list[dict[str, Any]]) -> str:
     rows: list[str] = []
     for run in runs[:8]:
         accuracy = run.get("accuracy")
-        accuracy_text = f"{_safe(accuracy)}%" if accuracy is not None else "—"
+        support_rate = run.get("support_rate", accuracy)
+        accuracy_text = f"{_safe(support_rate)}%" if support_rate is not None else "—"
         status = _run_status(run)
         duration = float(run.get("seconds", 0) or 0)
         rows.append(
@@ -356,7 +358,7 @@ def _recent_table(runs: list[dict[str, Any]]) -> str:
         )
     return (
         '<div class="table-wrap"><table><thead><tr><th>Topic</th><th>Status</th>'
-        "<th>Sources</th><th>Claims</th><th>Accuracy</th><th>Duration</th><th>Date</th>"
+        "<th>Sources</th><th>Claims</th><th>Support rate</th><th>Duration</th><th>Date</th>"
         f"</tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
     )
 
@@ -408,7 +410,7 @@ def dashboard_html(
         ("Reports generated", str(reports), "reports", f"{reports} saved reports"),
         ("Sources collected", str(sources), "sources", f"{sources} sources in completed runs"),
         ("Claims verified", str(verified), "claims", f"{verified} claims with a verdict"),
-        ("Citation accuracy", accuracy, "accuracy", "Supported share of verified claims"),
+        ("Citation support rate", accuracy, "accuracy", "Supported share of judged claims"),
     )
     kpi_markup: list[str] = []
     for label, value, metric, note in cards:

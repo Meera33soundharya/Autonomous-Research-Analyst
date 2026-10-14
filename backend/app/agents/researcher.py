@@ -3,7 +3,9 @@
 
 def analyze_sources(
     question: str,
-    sources: list[dict]
+    sources: list[dict],
+    topic: str = "",
+    scope: str = "",
 ) -> dict:
 
     question_sources = [
@@ -51,6 +53,12 @@ You are the Evidence Researcher Agent.
 
 RESEARCH QUESTION:
 {question}
+
+RESEARCH TOPIC:
+{topic}
+
+RESEARCH SCOPE:
+{scope or "No additional scope specified"}
 
 You are given only the sources collected for this research question.
 

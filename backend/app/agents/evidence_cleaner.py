@@ -220,13 +220,6 @@ def is_low_quality_evidence(text: str) -> bool:
     text = text.strip()
     lower = text.lower()
 
-    # Too short
-    if len(text) < 80:
-        return True
-
-    if len(text.split()) < 12:
-        return True
-
     # Webpage noise
     bad_patterns = [
         "manage subscriptions",
@@ -313,17 +306,6 @@ def is_low_quality_evidence(text: str) -> bool:
     if text.count("(") != text.count(")"):
         return True
 
-    # Excessive numbers
-    number_count = len(
-        re.findall(
-            r"\b\d+(?:\.\d+)?\b",
-            text
-        )
-    )
-
-    if number_count >= 8:
-        return True
-
     return False
 
 
@@ -332,7 +314,8 @@ def is_low_quality_evidence(text: str) -> bool:
 # ============================================================
 
 def clean_evidence(
-    evidence: list[dict]
+    evidence: list[dict],
+    rejected_findings: list[dict] | None = None,
 ) -> list[dict]:
 
     cleaned_evidence = []
@@ -356,6 +339,11 @@ def clean_evidence(
             if is_low_quality_evidence(
                 claim
             ):
+                if rejected_findings is not None:
+                    rejected_findings.append({
+                        "question": item.get("question", ""),
+                        "reason": "quality_filter",
+                    })
                 continue
 
             cleaned_finding = dict(

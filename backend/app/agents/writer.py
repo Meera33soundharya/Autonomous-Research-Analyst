@@ -94,6 +94,11 @@ def generate_report(
             "findings",
             []
         ):
+            if (
+                finding.get("relevance_status")
+                and finding.get("relevance_status") != "RELEVANT"
+            ):
+                continue
 
             status = finding.get(
                 "status",
@@ -113,6 +118,29 @@ def generate_report(
         supported_count
         + partial_count
     )
+
+    if total_verified == 0:
+        report.append(
+            f"Research status: INCOMPLETE. No supported, topic-relevant "
+            f"findings were available for {topic}; no factual conclusions "
+            "can be reported from the collected evidence."
+        )
+        report.append("")
+        report.append("## Research questions requiring more evidence")
+        report.append("")
+        questions = [
+            item.get("question", "").strip()
+            for item in verified_evidence
+            if item.get("question", "").strip()
+        ]
+        report.extend(f"- {question}" for question in questions)
+        if not questions:
+            report.append("- No research questions produced usable evidence.")
+        report.append("")
+        report.append("## References")
+        report.append("")
+        report.append("No verified, topic-relevant source references were available.")
+        return "\n".join(report)
 
     report.append(
         f"This report presents research findings about "
@@ -182,6 +210,11 @@ def generate_report(
             "findings",
             []
         ):
+            if (
+                finding.get("relevance_status")
+                and finding.get("relevance_status") != "RELEVANT"
+            ):
+                continue
 
             status = finding.get(
                 "status",

@@ -3,6 +3,7 @@ from langgraph.graph import StateGraph, START, END
 from app.graph.state import ResearchState
 
 from app.agents.planner import create_research_plan
+from app.agents.topic_normalizer import normalize_research_topic
 from app.agents.searcher import run_search
 from app.agents.researcher import analyze_sources
 from app.agents.evidence_cleaner import clean_evidence
@@ -23,13 +24,18 @@ def planner_node(state: ResearchState):
 
     print("\n=== Planner Agent ===")
 
-    topic = state["topic"]
+    raw_topic = state["topic"]
+    normalized = normalize_research_topic(raw_topic)
+    topic = normalized["topic"]
+
+    if not topic:
+        raise ValueError("A research topic is required.")
 
     print(
         f"Planning research for topic: {topic}"
     )
 
-    questions = create_research_plan(topic)
+    questions = create_research_plan(topic, normalized["scope"])
 
     print(
         f"Generated {len(questions)} research questions."
@@ -39,6 +45,10 @@ def planner_node(state: ResearchState):
         print(f"- {question}")
 
     return {
+        "topic": topic,
+        "raw_topic": normalized["raw_topic"],
+        "topic_scope": normalized["scope"],
+        "topic_meta": normalized["meta"],
         "research_questions": questions
     }
 
@@ -67,7 +77,8 @@ def searcher_node(state: ResearchState):
     )
 
     return {
-        "search_results": results
+        "search_results": results,
+        "source_count": len(results),
     }
 
 
@@ -92,7 +103,9 @@ def researcher_node(state: ResearchState):
 
         result = analyze_sources(
             question,
-            sources
+            sources,
+            state.get("topic", ""),
+            state.get("topic_scope", ""),
         )
 
         evidence.append(result)
@@ -102,7 +115,10 @@ def researcher_node(state: ResearchState):
     )
 
     return {
-        "evidence": evidence
+        "evidence": evidence,
+        "extracted_finding_count": sum(
+            len(item.get("findings", [])) for item in evidence
+        ),
     }
 
 
@@ -120,9 +136,8 @@ def evidence_cleaner_node(state: ResearchState):
         "Cleaning extracted research evidence..."
     )
 
-    cleaned_evidence = clean_evidence(
-        evidence
-    )
+    rejected_findings = []
+    cleaned_evidence = clean_evidence(evidence, rejected_findings)
 
     original_count = sum(
         len(item.get("findings", []))
@@ -143,7 +158,8 @@ def evidence_cleaner_node(state: ResearchState):
     )
 
     return {
-        "cleaned_evidence": cleaned_evidence
+        "cleaned_evidence": cleaned_evidence,
+        "cleaner_dropped_count": len(rejected_findings),
     }
 
 
@@ -164,12 +180,15 @@ def citation_checker_node(state: ResearchState):
     )
 
     verified = check_citations(
-        cleaned_evidence
+        cleaned_evidence,
+        state.get("topic", "")
     )
 
     supported = 0
     partial = 0
     unsupported = 0
+    topic_relevant = 0
+    irrelevant = 0
 
     for item in verified:
 
@@ -182,14 +201,21 @@ def citation_checker_node(state: ResearchState):
                 "status",
                 ""
             )
+            relevance = finding.get("relevance_status")
+            if relevance and relevance != "RELEVANT":
+                irrelevant += 1
 
             if status == "SUPPORTED":
 
                 supported += 1
+                if relevance == "RELEVANT":
+                    topic_relevant += 1
 
             elif status == "PARTIALLY_SUPPORTED":
 
                 partial += 1
+                if relevance == "RELEVANT":
+                    topic_relevant += 1
 
             else:
 
@@ -208,7 +234,9 @@ def citation_checker_node(state: ResearchState):
     )
 
     return {
-        "verified_evidence": verified
+        "verified_evidence": verified,
+        "run_status": "COMPLETED" if topic_relevant else "INCOMPLETE",
+        "irrelevant_finding_count": irrelevant,
     }
 
 

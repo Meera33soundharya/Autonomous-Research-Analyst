@@ -161,6 +161,13 @@ def _summary(topic: str, state: dict[str, Any], statuses: dict[str, str], elapse
         "partial": partial,
         "unsupported": unsupported,
         "accuracy": round(100 * supported / judged) if judged else None,
+        "support_rate": round(100 * supported / judged) if judged else None,
+        "diagnostics": {
+            "sources": int(state.get("source_count", len(sources)) or 0),
+            "extracted_findings": int(state.get("extracted_finding_count", 0) or 0),
+            "filtered_findings": int(state.get("cleaner_dropped_count", 0) or 0),
+            "irrelevant_findings": int(state.get("irrelevant_finding_count", 0) or 0),
+        },
         "claims": claims,
         "sources": sources,
         "questions": dashboard.get_questions(state),
@@ -274,10 +281,18 @@ def _execute_research(topic: str) -> dict[str, Any]:
             )
 
         elapsed = time.monotonic() - started
-        run = _summary(topic, live_state, statuses, elapsed, "Completed")
+        run_status = str(live_state.get("run_status") or "COMPLETED")
+        final_topic = str(live_state.get("topic") or topic)
+        run = _summary(final_topic, live_state, statuses, elapsed, run_status.title())
         store.save_run(run)
         st.session_state["latest_run_id"] = run["id"]
-        st.success(f"Research completed in {elapsed:.1f} seconds.")
+        if run_status == "INCOMPLETE":
+            st.warning(
+                "Research finished, but no supported, topic-relevant findings "
+                f"were available. Run time: {elapsed:.1f} seconds."
+            )
+        else:
+            st.success(f"Research completed in {elapsed:.1f} seconds.")
         return run
     except Exception as error:
         elapsed = time.monotonic() - started
@@ -324,6 +339,15 @@ def _render_run_details(run: dict[str, Any], include_error: bool = True) -> None
         f"{run.get('status', 'Unknown')} · {run.get('seconds', 0)}s · "
         f"{run.get('date') or run.get('created') or 'Date unavailable'}"
     )
+    diagnostics = run.get("diagnostics") or {}
+    if diagnostics:
+        st.caption(
+            "Run diagnostics: "
+            f"{diagnostics.get('sources', 0)} sources · "
+            f"{diagnostics.get('extracted_findings', 0)} extracted · "
+            f"{diagnostics.get('filtered_findings', 0)} filtered · "
+            f"{diagnostics.get('irrelevant_findings', 0)} irrelevant"
+        )
     question_tab, claim_tab, source_tab = st.tabs(("Questions", "Claims", "Sources"))
     with question_tab:
         _dataframe(
@@ -431,7 +455,11 @@ def history_page(runs: list[dict[str, Any]]) -> None:
             "Status": str(run.get("status") or "Unknown"),
             "Sources": int(run.get("n_sources", 0) or 0),
             "Claims": int(run.get("n_claims", 0) or 0),
-            "Accuracy": f"{run['accuracy']}%" if run.get("accuracy") is not None else "—",
+            "Support rate": (
+                f"{run.get('support_rate', run.get('accuracy'))}%"
+                if run.get("support_rate", run.get("accuracy")) is not None
+                else "—"
+            ),
             "Duration": f"{float(run.get('seconds', 0) or 0):.1f}s",
             "Date": str(run.get("date") or run.get("created") or "Unknown"),
         }

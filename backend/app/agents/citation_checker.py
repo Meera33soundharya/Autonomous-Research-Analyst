@@ -11,23 +11,73 @@ VALID_STATUSES = {
     "UNSUPPORTED",
 }
 
+VALID_RELEVANCE_STATUSES = {
+    "RELEVANT",
+    "PARTIALLY_RELEVANT",
+    "IRRELEVANT",
+}
+
 
 def _extract_status(response: str) -> str:
-    if not response:
-        return "PARTIALLY_SUPPORTED"
+    match = re.search(
+        r"\b(PARTIALLY_SUPPORTED|UNSUPPORTED|SUPPORTED)\b",
+        (response or "").upper(),
+    )
+    return match.group(1) if match else "UNSUPPORTED"
 
-    text = response.upper()
 
-    if "PARTIALLY_SUPPORTED" in text:
-        return "PARTIALLY_SUPPORTED"
+def _extract_relevance(response: str) -> tuple[str, str]:
+    match = re.search(
+        r"(?im)^\s*(PARTIALLY_RELEVANT|IRRELEVANT|RELEVANT)\b"
+        r"\s*(?:\||:|-)?\s*(.*)$",
+        response or "",
+    )
+    if not match:
+        return "IRRELEVANT", "No valid relevance decision was returned."
+    status, reason = match.groups()
+    return status, reason.strip()
 
-    if "SUPPORTED" in text:
-        return "SUPPORTED"
 
-    if "UNSUPPORTED" in text:
-        return "UNSUPPORTED"
+def _check_relevance(
+    finding: dict,
+    topic: str,
+    question: str = "",
+) -> tuple[str, str]:
+    claim = str(finding.get("claim", "")).strip()
+    question = question or str(finding.get("question", "")).strip()
+    source_content = str(finding.get("source_content", "")).strip()
+    if not topic or not claim:
+        return "IRRELEVANT", "The topic or claim is missing."
 
-    return "PARTIALLY_SUPPORTED"
+    prompt = f"""
+You are a strict research-topic relevance evaluator.
+Decide whether the claim directly answers the research topic or its scope.
+Citation support alone does not make an unrelated claim relevant.
+
+RESEARCH TOPIC:
+{topic}
+
+RESEARCH QUESTION:
+{question}
+
+CLAIM:
+{claim}
+
+SOURCE CONTEXT:
+{source_content[:6000]}
+
+Return one line in this exact form:
+RELEVANT | reason
+PARTIALLY_RELEVANT | reason
+IRRELEVANT | reason
+
+Use RELEVANT only when the claim directly concerns the topic. Use
+PARTIALLY_RELEVANT when only a material part does. Do not use outside knowledge.
+"""
+    try:
+        return _extract_relevance(ask_llm(prompt))
+    except Exception:
+        return "IRRELEVANT", "Relevance evaluation failed."
 
 
 def _verify_finding(finding: dict) -> str:
@@ -67,10 +117,10 @@ Rules:
         response = ask_llm(prompt)
         return _extract_status(response)
     except Exception:
-        return "PARTIALLY_SUPPORTED"
+        return "UNSUPPORTED"
 
 
-def check_citations(evidence: list[dict]) -> list[dict]:
+def check_citations(evidence: list[dict], topic: str = "") -> list[dict]:
     verified = []
 
     supported = 0
@@ -91,6 +141,16 @@ def check_citations(evidence: list[dict]) -> list[dict]:
             # source_title, source_url, source_content,
             # source_quality, source_number, etc. are preserved.
             verified_finding = dict(finding)
+
+            if topic:
+                relevance, reason = _check_relevance(finding, topic, question)
+                verified_finding["relevance_status"] = relevance
+                verified_finding["relevance_reason"] = reason
+                if relevance != "RELEVANT":
+                    verified_finding["status"] = "UNSUPPORTED"
+                    unsupported += 1
+                    verified_findings.append(verified_finding)
+                    continue
 
             status = _verify_finding(finding)
 

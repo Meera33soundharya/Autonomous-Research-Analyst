@@ -5,6 +5,22 @@ class ResearchState(TypedDict, total=False):
 
     topic: str
 
+    raw_topic: str
+
+    topic_scope: str
+
+    topic_meta: str
+
+    run_status: str
+
+    source_count: int
+
+    extracted_finding_count: int
+
+    cleaner_dropped_count: int
+
+    irrelevant_finding_count: int
+
     research_questions: list[str]
 
     search_results: list[dict]

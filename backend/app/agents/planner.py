@@ -22,13 +22,14 @@ BAD_PHRASES = [
 ]
 
 
-def _fallback_questions(topic: str) -> list[str]:
+def _fallback_questions(topic: str, scope: str = "") -> list[str]:
+    context = f"{topic} within this scope: {scope}" if scope else topic
     return [
-        f"What is {topic}, and what are its main concepts and characteristics?",
-        f"What are the major applications, uses, or benefits of {topic}?",
-        f"What research evidence and findings currently exist about {topic}?",
-        f"What are the main challenges, limitations, and risks associated with {topic}?",
-        f"What future developments and research opportunities exist for {topic}?",
+        f"What is {context}, and what are its main concepts and characteristics?",
+        f"What are the major applications, uses, or benefits of {context}?",
+        f"What research evidence and findings currently exist about {context}?",
+        f"What are the main challenges, limitations, and risks associated with {context}?",
+        f"What future developments and research opportunities exist for {context}?",
     ]
 
 
@@ -85,7 +86,7 @@ def _clean_questions(response: str, topic: str) -> list[str]:
     return questions[:5]
 
 
-def run_planner(topic: str) -> list[str]:
+def run_planner(topic: str, scope: str = "") -> list[str]:
 
     topic = topic.strip()
 
@@ -98,7 +99,11 @@ You are the Planner Agent of an autonomous research analyst.
 Research topic:
 {topic}
 
+Research scope:
+{scope or "No additional scope specified"}
+
 Generate exactly five research questions ONLY about the research topic above.
+Respect the stated scope in every question.
 
 Question 1 must focus on definition and key concepts.
 Question 2 must focus on applications, uses, or benefits.
@@ -132,11 +137,11 @@ Return only five numbered questions.
     except Exception:
         pass
 
-    return _fallback_questions(topic)
+    return _fallback_questions(topic, scope)
 
 
-def create_research_plan(topic: str) -> list[str]:
+def create_research_plan(topic: str, scope: str = "") -> list[str]:
     """
     Compatibility function used by workflow.py.
     """
-    return run_planner(topic)
+    return run_planner(topic, scope)
