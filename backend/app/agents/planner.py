@@ -23,6 +23,20 @@ BAD_PHRASES = [
 
 
 def _fallback_questions(topic: str, scope: str = "") -> list[str]:
+    normalized_topic = topic.casefold()
+    if (
+        "voice" in normalized_topic
+        and ("complaint" in normalized_topic or "grievance" in normalized_topic)
+        and ("officer" in normalized_topic or "assignment" in normalized_topic)
+    ):
+        return [
+            "What evidence evaluates voice-based complaint registration using speech-to-text systems?",
+            "How do multilingual voice interfaces support citizen grievance registration?",
+            "How are citizen grievances automatically classified and routed through complaint-management workflows?",
+            "What methods use complaint category, location, or urgency to assign field officers?",
+            "What reported risks affect speech recognition, multilingual access, privacy, or automated field assignment?",
+        ]
+
     context = f"{topic} within this scope: {scope}" if scope else topic
     return [
         f"What is {context}, and what are its main concepts and characteristics?",
@@ -104,6 +118,9 @@ Research scope:
 
 Generate exactly five research questions ONLY about the research topic above.
 Respect the stated scope in every question.
+For a combined system topic, ask distinct questions about its component
+technologies, end-to-end workflow, assignment decisions, and limitations.
+Do not repeat the full project title as if it were a single established term.
 
 Question 1 must focus on definition and key concepts.
 Question 2 must focus on applications, uses, or benefits.

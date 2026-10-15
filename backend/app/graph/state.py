@@ -13,6 +13,12 @@ class ResearchState(TypedDict, total=False):
 
     run_status: str
 
+    execution_status: str
+
+    evidence_status: str
+
+    extraction_status: str
+
     source_count: int
 
     extracted_finding_count: int
@@ -20,6 +26,10 @@ class ResearchState(TypedDict, total=False):
     cleaner_dropped_count: int
 
     irrelevant_finding_count: int
+
+    pipeline_diagnostics: dict
+
+    research_quality: dict
 
     research_questions: list[str]
 

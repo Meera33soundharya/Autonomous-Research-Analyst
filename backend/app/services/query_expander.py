@@ -5,9 +5,87 @@ from app.services.llm_service import ask_llm
 from app.services.research_memory import get_related_memory
 
 
+def _targeted_subtopic(topic: str, question: str, index: int) -> str | None:
+    normalized_topic = topic.casefold()
+    if not (
+        "voice" in normalized_topic
+        and ("complaint" in normalized_topic or "grievance" in normalized_topic)
+        and ("officer" in normalized_topic or "assignment" in normalized_topic)
+    ):
+        return None
+
+    components = (
+        (
+            (
+                "field officer",
+                "field officers",
+                "field assignment",
+                "officer assignment",
+                "assign field",
+                "workflow automation",
+            ),
+            "field officer assignment grievance redressal workflow automation",
+        ),
+        (
+            (
+                "grievance management",
+                "complaint-management",
+                "complaint classification",
+                "automatically classified",
+                "automated classification",
+                "triage",
+            ),
+            "citizen grievance management automated complaint classification",
+        ),
+        (
+            ("multilingual", "language interface", "language access", "translation"),
+            "multilingual voice interfaces speech recognition citizen services",
+        ),
+        (
+            (
+                "voice-based",
+                "speech-to-text",
+                "speech recognition",
+                "voice interface",
+                "voice assistant",
+            ),
+            "voice-based complaint registration speech-to-text systems",
+        ),
+    )
+    normalized_question = question.casefold().replace(
+        normalized_topic,
+        "",
+    )
+    matching = [
+        (sum(normalized_question.count(keyword) for keyword in keywords), query)
+        for keywords, query in components
+        if any(keyword in normalized_question for keyword in keywords)
+    ]
+    if matching:
+        return max(matching, key=lambda item: item[0])[1] + " research evidence"
+    return components[index % len(components)][1] + " research evidence"
+
+
+def _with_targeted_query(
+    topic: str,
+    question: str,
+    queries: list[str],
+    index: int,
+) -> list[str]:
+    targeted = _targeted_subtopic(topic, question, index)
+    if not targeted:
+        return queries[:2]
+    return [targeted, *[
+        query
+        for query in queries
+        if query.casefold() != targeted.casefold()
+    ][:1]]
+
+
 def expand_search_queries(
     topic: str,
-    questions: list[str]
+    questions: list[str],
+    diagnostics: list[dict] | None = None,
 ) -> dict[str, list[str]]:
 
     memory = get_related_memory(
@@ -82,9 +160,39 @@ Format:
 }}
 """
 
-    response = ask_llm(
-        prompt
-    )
+    try:
+        response = ask_llm(prompt)
+    except Exception as error:
+        if diagnostics is not None:
+            diagnostics.append({
+                "stage": "query_expansion",
+                "error": f"{type(error).__name__}: {error}",
+            })
+        return {
+            question: _with_targeted_query(
+                topic,
+                question,
+                [question, f"{question} research study evidence"],
+                index,
+            )
+            for index, question in enumerate(questions)
+        }
+
+    if "model service is unavailable" in response.casefold():
+        if diagnostics is not None:
+            diagnostics.append({
+                "stage": "query_expansion",
+                "error": response.strip(),
+            })
+        return {
+            question: _with_targeted_query(
+                topic,
+                question,
+                [question, f"{question} research study evidence"],
+                index,
+            )
+            for index, question in enumerate(questions)
+        }
 
     try:
 
@@ -94,7 +202,13 @@ Format:
             re.DOTALL
         )
 
-        if match:
+        if not match:
+            if diagnostics is not None:
+                diagnostics.append({
+                    "stage": "query_expansion",
+                    "error": "The query planner returned no JSON object.",
+                })
+        else:
 
             data = json.loads(
                 match.group(0)
@@ -122,22 +236,39 @@ Format:
                 ]
 
                 if not queries:
+                    if diagnostics is not None:
+                        diagnostics.append({
+                            "stage": "query_expansion",
+                            "question": question,
+                            "error": "No generated queries; using deterministic fallbacks.",
+                        })
                     queries = [
                         question,
                         f"{question} research study evidence"
                     ]
 
-                cleaned[question] = queries[:2]
+                cleaned[question] = _with_targeted_query(
+                    topic,
+                    question,
+                    queries,
+                    questions.index(question),
+                )
 
             return cleaned
 
-    except Exception:
-        pass
+    except Exception as error:
+        if diagnostics is not None:
+            diagnostics.append({
+                "stage": "query_expansion",
+                "error": f"Malformed query JSON ({type(error).__name__}: {error})",
+            })
 
     return {
-        question: [
+        question: _with_targeted_query(
+            topic,
             question,
-            f"{question} research study evidence"
-        ]
-        for question in questions
+            [question, f"{question} research study evidence"],
+            index,
+        )
+        for index, question in enumerate(questions)
     }

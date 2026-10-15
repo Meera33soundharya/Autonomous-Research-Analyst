@@ -1,488 +1,255 @@
 import re
+from urllib.parse import urlparse
 
 
 def clean_report_text(text: str) -> str:
-    """Clean spacing and webpage extraction artifacts."""
-
     if not text:
         return ""
 
-    replacements = {
-        "invarious": "in various",
-        "andpotential": "and potential",
-        "careapproaches": "care approaches",
-        "theevidence": "the evidence",
-        "sourcecontent": "source content",
-        "AReview": "A Review",
-        "healthcarebalance": "healthcare balance",
-        "healthcareAI": "healthcare AI",
-        "patientmonitoring": "patient monitoring",
-        "patientcare": "patient care",
-        "patientrecords": "patient records",
-        "clinicaldecision": "clinical decision",
-        "medicalimaging": "medical imaging",
-        "drugdiscovery": "drug discovery",
-        "clinicalsettings": "clinical settings",
-        "safetyrisks": "safety risks",
-        "accountability.Inaccuracies": "accountability. Inaccuracies",
-        "biasagainst": "bias against",
-        "downstreamuse": "downstream use",
-        "underrepresented": "underrepresented",
-        "workforce-related": "workforce-related",
-        "technical, financial": "technical, financial",
-    }
-
-    for old, new in replacements.items():
-        text = text.replace(old, new)
-
-    text = re.sub(
-        r"\s+",
-        " ",
-        text
-    )
-
-    text = re.sub(
-        r"\s+([,.!?;:])",
-        r"\1",
-        text
-    )
-
-    text = re.sub(
-        r"([,.!?;:])([A-Za-z])",
-        r"\1 \2",
-        text
-    )
-
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\s+([,.!?;:])", r"\1", text)
+    text = re.sub(r"([,.!?;:])([A-Za-z])", r"\1 \2", text)
     return text.strip()
+
+
+def _valid_source_url(value: str) -> bool:
+    parsed = urlparse(value)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
 def generate_report(
     topic: str,
-    verified_evidence: list[dict]
+    verified_evidence: list[dict],
+    run_status: str = "",
+    pipeline_diagnostics: dict | None = None,
 ) -> str:
-    """Generate the final research report."""
-
-    report = []
-
-    # ========================================================
-    # TITLE
-    # ========================================================
-
-    report.append(
-        f"# {topic}"
-    )
-
-    report.append("")
-
-    # ========================================================
-    # 1. EXECUTIVE SUMMARY
-    # ========================================================
-
-    report.append(
-        "## 1. Executive Summary"
-    )
-
-    report.append("")
-
-    supported_count = 0
-    partial_count = 0
-    unsupported_count = 0
-
-    for item in verified_evidence:
-
-        for finding in item.get(
-            "findings",
-            []
-        ):
-            if (
-                finding.get("relevance_status")
-                and finding.get("relevance_status") != "RELEVANT"
-            ):
-                continue
-
-            status = finding.get(
-                "status",
-                ""
-            ).upper()
-
-            if status == "SUPPORTED":
-                supported_count += 1
-
-            elif status == "PARTIALLY_SUPPORTED":
-                partial_count += 1
-
-            elif status == "UNSUPPORTED":
-                unsupported_count += 1
-
-    total_verified = (
-        supported_count
-        + partial_count
-    )
-
-    if total_verified == 0:
-        report.append(
-            f"Research status: INCOMPLETE. No supported, topic-relevant "
-            f"findings were available for {topic}; no factual conclusions "
-            "can be reported from the collected evidence."
+    """Build a report exclusively from verified findings and their sources."""
+    pipeline_diagnostics = pipeline_diagnostics or {}
+    report = [f"# {topic}", ""]
+    findings = [
+        (group.get("question", ""), finding)
+        for group in verified_evidence
+        for finding in group.get("findings", [])
+    ]
+    relevant = [
+        finding
+        for _, finding in findings
+        if finding.get("relevance_status") == "RELEVANT"
+    ]
+    accepted = [
+        (question, finding)
+        for question, finding in findings
+        if (
+            finding.get("relevance_status") == "RELEVANT"
+            and finding.get("status") in {"SUPPORTED", "PARTIALLY_SUPPORTED"}
+            and str(finding.get("claim", "")).strip()
+            and _valid_source_url(str(finding.get("source_url", "")).strip())
+            and str(finding.get("supporting_passage", "")).strip()
         )
-        report.append("")
-        report.append("## Research questions requiring more evidence")
-        report.append("")
-        questions = [
-            item.get("question", "").strip()
-            for item in verified_evidence
-            if item.get("question", "").strip()
-        ]
-        report.extend(f"- {question}" for question in questions)
-        if not questions:
-            report.append("- No research questions produced usable evidence.")
-        report.append("")
-        report.append("## References")
-        report.append("")
-        report.append("No verified, topic-relevant source references were available.")
-        return "\n".join(report)
-
-    report.append(
-        f"This report presents research findings about "
-        f"{topic}. The autonomous research workflow "
-        f"collected web sources, extracted evidence, "
-        f"and checked the evidence against its source "
-        f"content."
+    ]
+    supported_count = sum(
+        finding.get("status") == "SUPPORTED"
+        for _, finding in accepted
     )
+    partial_count = len(accepted) - supported_count
+    rejected_count = len(findings) - len(accepted)
+    final_status = run_status or ("COMPLETED" if accepted else "INCOMPLETE")
+    if not accepted and final_status == "COMPLETED":
+        final_status = "INCOMPLETE"
 
-    report.append("")
+    report.extend([
+        "## 1. Executive Summary",
+        "",
+        f"Research status: **{final_status}**.",
+        (
+            f"The workflow retained {supported_count} supported and "
+            f"{partial_count} partially supported, topic-relevant claims. "
+            f"{rejected_count} claims were excluded from the report."
+            if accepted
+            else             "No verified, topic-relevant findings are available. "
+            f"The research run status is {final_status}; no successful "
+            "evidence report is claimed."
+        ),
+        "",
+        "## 2. Introduction",
+        "",
+        f"This report examines {topic}. Findings below are limited to "
+        "retrieved source material and are included only when they have "
+        "a verified citation and traceable supporting passage.",
+        "",
+        "## 3. Research Objectives",
+        "",
+        f"The objective was to investigate {topic}, identify source-grounded "
+        "evidence, and distinguish supported claims from incomplete or "
+        "unsupported claims.",
+        "",
+        "## 4. Research Questions",
+        "",
+    ])
+    questions = [
+        str(group.get("question", "")).strip()
+        for group in verified_evidence
+        if str(group.get("question", "")).strip()
+    ]
+    report.extend(f"- {clean_report_text(question)}" for question in questions)
+    if not questions:
+        report.append("- No research questions were produced.")
 
-    report.append(
-        f"The workflow identified {total_verified} "
-        f"findings with supporting or partial source "
-        f"evidence. {supported_count} findings were "
-        f"classified as supported and {partial_count} "
-        f"findings were classified as partially supported."
-    )
+    report.extend([
+        "",
+        "## 5. Methodology and Source Selection",
+        "",
+        "Research questions were sent through the configured web and scholarly "
+        "search integrations. Claims were extracted from retrieved source "
+        "content, screened for topic relevance separately from source support, "
+        "and checked against a verbatim source passage. Source credibility "
+        "scores are metadata/domain heuristics, not an independent peer-review "
+        "or publisher audit.",
+        "",
+        "## 6. Key Research Findings",
+        "",
+    ])
+    if accepted:
+        references: list[dict] = []
+        reference_ids: dict[str, int] = {}
+        accepted_by_question: dict[str, list[tuple[int, dict]]] = {}
 
-    report.append("")
-
-    # ========================================================
-    # 2. INTRODUCTION
-    # ========================================================
-
-    report.append(
-        "## 2. Introduction"
-    )
-
-    report.append("")
-
-    report.append(
-        f"The research focuses on {topic}. The system "
-        f"generated research questions, collected web "
-        f"sources, extracted relevant evidence, and "
-        f"evaluated the relationship between each claim "
-        f"and its source content."
-    )
-
-    report.append("")
-
-    # ========================================================
-    # 3. KEY FINDINGS
-    # ========================================================
-
-    report.append(
-        "## 3. Key Findings"
-    )
-
-    report.append("")
-
-    references = []
-    seen_references = set()
-
-    for item in verified_evidence:
-
-        question = clean_report_text(
-            item.get(
-                "question",
-                ""
-            ).strip()
-        )
-
-        valid_findings = []
-
-        for finding in item.get(
-            "findings",
-            []
-        ):
-            if (
-                finding.get("relevance_status")
-                and finding.get("relevance_status") != "RELEVANT"
-            ):
-                continue
-
-            status = finding.get(
-                "status",
-                ""
-            ).upper()
-
-            # Include only verified findings
-            if status not in [
-                "SUPPORTED",
-                "PARTIALLY_SUPPORTED"
-            ]:
-                continue
-
-            # ------------------------------------------------
-            # Claim
-            # ------------------------------------------------
-
-            claim = clean_report_text(
-                finding.get(
-                    "claim",
-                    ""
-                ).strip()
-            )
-
-            # ------------------------------------------------
-            # SOURCE TITLE
-            #
-            # New format:
-            # source_title
-            #
-            # Fallback:
-            # source
-            # ------------------------------------------------
-
-            source = clean_report_text(
-                finding.get(
-                    "source_title",
-                    finding.get(
-                        "source",
-                        ""
-                    )
-                ).strip()
-            )
-
-            # ------------------------------------------------
-            # SOURCE URL
-            #
-            # New format:
-            # source_url
-            #
-            # Fallback:
-            # url
-            # ------------------------------------------------
-
-            url = finding.get(
-                "source_url",
-                finding.get(
-                    "url",
-                    ""
-                )
-            ).strip()
-
-            if not claim:
-                continue
-
-            valid_findings.append({
-                "claim": claim,
-                "source": source,
-                "url": url,
-                "status": status
-            })
-
-            # ------------------------------------------------
-            # Build unique reference list
-            # ------------------------------------------------
-
-            reference_key = (
-                source,
-                url
-            )
-
-            if (
-                source
-                and url
-                and reference_key
-                not in seen_references
-            ):
-
-                seen_references.add(
-                    reference_key
-                )
-
+        for question, finding in accepted:
+            url = str(finding["source_url"]).strip()
+            if url not in reference_ids:
+                reference_ids[url] = len(references) + 1
                 references.append({
-                    "source": source,
-                    "url": url
+                    "title": clean_report_text(
+                        str(finding.get("source_title") or "Untitled source")
+                    ),
+                    "url": url,
+                    "authors": finding.get("authors", []),
+                    "year": str(finding.get("year") or ""),
+                    "doi": str(finding.get("doi") or ""),
                 })
-
-        if not valid_findings:
-            continue
-
-        # ----------------------------------------------------
-        # Research Question
-        # ----------------------------------------------------
-
-        report.append(
-            f"### {question}"
-        )
-
-        report.append("")
-
-        # ----------------------------------------------------
-        # Findings
-        # ----------------------------------------------------
-
-        for finding in valid_findings:
-
-            report.append(
-                f"- **Claim:** {finding['claim']}"
+            accepted_by_question.setdefault(question, []).append(
+                (reference_ids[url], finding)
             )
 
-            report.append(
-                f"- **Source:** {finding['source']}"
-            )
-
-            report.append(
-                f"- **Status:** {finding['status']}"
-            )
-
+        for question, question_findings in accepted_by_question.items():
+            report.extend([f"### {clean_report_text(question)}", ""])
+            for reference_id, finding in question_findings:
+                claim = clean_report_text(str(finding.get("claim", "")))
+                passage = clean_report_text(
+                    str(finding.get("supporting_passage", ""))
+                )
+                report.append(
+                    f"- **Claim [{reference_id}]:** {claim} "
+                    f"(**{finding['status']}**)"
+                )
+                report.append(f'  - **Supporting passage:** "{passage}"')
             report.append("")
-
-    # ========================================================
-    # 4. EVIDENCE ANALYSIS
-    # ========================================================
-
-    report.append(
-        "## 4. Evidence Analysis"
-    )
-
-    report.append("")
-
-    report.append(
-        f"Supported findings: {supported_count}"
-    )
-
-    report.append(
-        f"Partially supported findings: {partial_count}"
-    )
-
-    report.append(
-        f"Unsupported findings excluded from report: "
-        f"{unsupported_count}"
-    )
-
-    report.append("")
-
-    report.append(
-        "Only supported and partially supported findings "
-        "are included in the main research report. "
-        "Unsupported findings are excluded from the "
-        "report content."
-    )
-
-    report.append("")
-
-    # ========================================================
-    # 5. CHALLENGES AND LIMITATIONS
-    # ========================================================
-
-    report.append(
-        "## 5. Challenges and Limitations"
-    )
-
-    report.append("")
-
-    report.append(
-        "The report is limited to the sources collected "
-        "by the research workflow. The citation checker "
-        "evaluates whether the extracted claim has "
-        "textual support in the collected source content. "
-        "A partially supported finding should therefore "
-        "not be interpreted as complete verification."
-    )
-
-    report.append("")
-
-    if unsupported_count > 0:
-
-        report.append(
-            f"The workflow identified "
-            f"{unsupported_count} unsupported findings. "
-            f"These findings were excluded from the main "
-            f"research report."
-        )
-
-        report.append("")
-
-    # ========================================================
-    # 6. FUTURE OPPORTUNITIES
-    # ========================================================
-
-    report.append(
-        "## 6. Future Opportunities"
-    )
-
-    report.append("")
-
-    report.append(
-        "Future versions can improve source ranking, "
-        "evidence extraction, semantic citation "
-        "verification, duplicate detection, source "
-        "credibility assessment, and report generation."
-    )
-
-    report.append("")
-
-    # ========================================================
-    # 7. CONCLUSION
-    # ========================================================
-
-    report.append(
-        "## 7. Conclusion"
-    )
-
-    report.append("")
-
-    report.append(
-        f"The autonomous research workflow demonstrates "
-        f"how research questions, web search, evidence "
-        f"extraction, citation checking, and report "
-        f"generation can be connected into an automated "
-        f"research pipeline for the topic of {topic}."
-    )
-
-    report.append("")
-
-    report.append(
-        f"The final report contains {total_verified} "
-        f"findings that passed the minimum "
-        f"evidence-support criteria."
-    )
-
-    report.append("")
-
-    # ========================================================
-    # REFERENCES
-    # ========================================================
-
-    report.append(
-        "## References"
-    )
-
-    report.append("")
-
-    if references:
-
-        for reference in references:
-
-            report.append(
-                f"- {reference['source']}: "
-                f"{reference['url']}"
-            )
-
     else:
+        report.extend([
+            "No claims met the relevance, citation, and provenance checks.",
+            "",
+        ])
 
+    report.extend([
+        "## 7. Evidence Analysis",
+        "",
+        f"Accepted supported claims: {supported_count}.",
+        f"Accepted partially supported claims: {partial_count}.",
+        f"Rejected or non-relevant claims: {rejected_count}.",
+        "",
+        "A source discussing a similar subject was not sufficient on its own: "
+        "accepted claims required a relevant classification, source support, "
+        "a valid URL, and a traceable passage.",
+        "",
+        "## 8. Comparative Analysis",
+        "",
+    ])
+    if re.search(r"\b(?:versus|vs\.?)\b", topic, re.IGNORECASE) and accepted:
         report.append(
-            "No verified source references were available."
+            "The comparison is limited to the verified claims above. "
+            "No side-by-side conclusion is added where the collected findings "
+            "do not directly compare the alternatives."
+        )
+    else:
+        report.append(
+            "A comparative analysis is not applicable to this topic, or the "
+            "collected verified evidence does not support a direct comparison."
         )
 
-    report.append("")
+    search_diagnostics = pipeline_diagnostics.get("searcher", {})
+    extraction_diagnostics = pipeline_diagnostics.get("extraction", {})
+    cleaner_diagnostics = pipeline_diagnostics.get("evidence_cleaner", {})
+    citation_diagnostics = pipeline_diagnostics.get("citation_checker", {})
+    report.extend([
+        "",
+        "## 9. Challenges and Limitations",
+        "",
+        f"Sources retrieved: {search_diagnostics.get('unique_source_count', 0)}. "
+        f"Source-question pairs with usable content: "
+        f"{extraction_diagnostics.get('usable_sources_by_question', 0)}. "
+        f"Findings extracted: {extraction_diagnostics.get('extracted_findings', 0)}. "
+        f"Findings rejected during cleaning: "
+        f"{cleaner_diagnostics.get('rejected_findings', 0)}. "
+        f"Unsupported claims: {citation_diagnostics.get('unsupported_claims', 0)}.",
+        "",
+        "Search coverage depends on the availability and response quality of "
+        "the configured providers. LLM-based relevance and citation judgments "
+        "are not independent human review. This report does not establish that "
+        "all relevant literature was retrieved or detect every cross-source "
+        "contradiction.",
+        "",
+        "## 10. Future Research Opportunities",
+        "",
+        "Research questions without a verified finding identify evidence gaps "
+        "for follow-up; they are not evidence of a particular conclusion.",
+    ])
+    covered_questions = {question for question, _ in accepted}
+    uncovered_questions = [
+        question for question in questions if question not in covered_questions
+    ]
+    if uncovered_questions:
+        report.extend(
+            f"- Seek additional evidence for: {clean_report_text(question)}"
+            for question in uncovered_questions
+        )
+    else:
+        report.append("- No uncovered research questions were identified.")
 
+    report.extend([
+        "",
+        "## 11. Conclusion",
+        "",
+    ])
+    if accepted:
+        report.append(
+            f"The collected sources support {supported_count} claims and "
+            f"partially support {partial_count} claims relevant to {topic}. "
+            "Conclusions should remain within those findings and the "
+            "limitations above."
+        )
+    else:
+        report.append(
+            f"The workflow did not establish verified findings about {topic}. "
+            "No substantive conclusion is drawn; further source collection "
+            "and verification are required."
+        )
+
+    report.extend(["", "## 12. References", ""])
+    if accepted:
+        for index, reference in enumerate(references, 1):
+            authors = reference["authors"]
+            author_text = (
+                ", ".join(map(str, authors))
+                if isinstance(authors, list) and authors
+                else "Author unavailable"
+            )
+            year = reference["year"] or "Date unavailable"
+            doi_text = f" DOI: {reference['doi']}." if reference["doi"] else ""
+            report.append(
+                f"- [{index}] {author_text} ({year}). {reference['title']}. "
+                f"{reference['url']}.{doi_text}"
+            )
+    else:
+        report.append("No verified source references were available.")
+    report.append("")
     return "\n".join(report)

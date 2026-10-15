@@ -1,7 +1,10 @@
+import logging
 import os
 import re
 
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 try:
     from openai import OpenAI
@@ -30,7 +33,9 @@ client = None
 if api_key and OpenAI is not None:
     client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
-        api_key=api_key
+        api_key=api_key,
+        timeout=45.0,
+        max_retries=0,
     )
 
 
@@ -60,15 +65,6 @@ def _fallback_response(prompt: str) -> str:
         ]
         return "\n".join(questions)
 
-    if "Extract factual findings" in prompt:
-        question = topic
-        findings = [
-            f"FINDING | 1 | {question} is a topic with practical applications that are routinely discussed in public and technical sources.",
-            f"FINDING | 2 | The evidence base for {question} emphasizes both benefits and operational limitations depending on context and implementation quality.",
-            f"FINDING | 3 | Ongoing research and policy discussions around {question} continue to focus on performance, safety, and governance considerations.",
-        ]
-        return "\n".join(findings)
-
     return (
         "The model service is unavailable in this environment. "
         "A local fallback response was generated instead of a live model answer."
@@ -81,6 +77,9 @@ def _fallback_response(prompt: str) -> str:
 
 def ask_llm(prompt: str) -> str:
     if client is None:
+        logger.warning(
+            "OpenRouter is not configured; returning a fallback response."
+        )
         return _fallback_response(prompt)
 
     try:
@@ -101,14 +100,31 @@ def ask_llm(prompt: str) -> str:
                     "content": prompt
                 }
             ],
-            temperature=0.2
+            temperature=0.2,
         )
 
         content = response.choices[0].message.content
 
         if not content:
-            return "No response generated."
+            logger.warning(
+                "OpenRouter returned an empty content field (model=%s, finish_reason=%s).",
+                response.model,
+                response.choices[0].finish_reason,
+            )
+            return ""
 
         return content.strip()
-    except Exception:
-        return _fallback_response(prompt)
+    except Exception as error:
+        status_code = getattr(error, "status_code", None)
+        logger.error(
+            "OpenRouter request failed (error_type=%s, status_code=%s).",
+            type(error).__name__,
+            status_code if isinstance(status_code, int) else "unknown",
+        )
+        failure = (
+            f"The model service is unavailable "
+            f"(OpenRouter {type(error).__name__}"
+        )
+        if isinstance(status_code, int):
+            failure += f", HTTP {status_code}"
+        return failure + ")."

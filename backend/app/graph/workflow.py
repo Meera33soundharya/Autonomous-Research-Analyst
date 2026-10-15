@@ -4,7 +4,7 @@ from app.graph.state import ResearchState
 
 from app.agents.planner import create_research_plan
 from app.agents.topic_normalizer import normalize_research_topic
-from app.agents.searcher import run_search
+from app.agents.searcher import run_search_with_diagnostics
 from app.agents.researcher import analyze_sources
 from app.agents.evidence_cleaner import clean_evidence
 from app.agents.citation_checker import check_citations
@@ -14,6 +14,7 @@ from app.services.report_service import (
     save_markdown,
     save_pdf
 )
+from app.services.quality_evaluator import evaluate_research_quality
 
 
 # ============================================================
@@ -67,7 +68,7 @@ def searcher_node(state: ResearchState):
         f"Searching sources for {len(questions)} research questions..."
     )
 
-    results = run_search(
+    results, search_diagnostics = run_search_with_diagnostics(
         state["topic"],
         questions
     )
@@ -79,6 +80,10 @@ def searcher_node(state: ResearchState):
     return {
         "search_results": results,
         "source_count": len(results),
+        "pipeline_diagnostics": {
+            **state.get("pipeline_diagnostics", {}),
+            "searcher": search_diagnostics,
+        },
     }
 
 
@@ -110,15 +115,102 @@ def researcher_node(state: ResearchState):
 
         evidence.append(result)
 
+    question_diagnostics = [
+        item.get("diagnostics", {})
+        for item in evidence
+    ]
+    extraction_status_counts = {}
+    for diagnostic in question_diagnostics:
+        status = diagnostic.get("status", "UNKNOWN")
+        extraction_status_counts[status] = (
+            extraction_status_counts.get(status, 0) + 1
+        )
+    failure_statuses = (
+        "LLM_REQUEST_FAILED",
+        "INVALID_LLM_RESPONSE",
+        "EXTRACTION_FAILED",
+    )
+    extraction_status = (
+        next(
+            (
+                status
+                for status in failure_statuses
+                if status in extraction_status_counts
+            ),
+            "",
+        )
+        or (
+            "EXTRACTION_COMPLETED"
+            if extraction_status_counts.get("EXTRACTION_COMPLETED")
+            else "NO_RELEVANT_EVIDENCE"
+        )
+    )
+    extraction_diagnostics = {
+        "research_question_count": len(questions),
+        "sources_retrieved": len(sources),
+        "status_counts": extraction_status_counts,
+        "status": extraction_status,
+        "usable_sources_by_question": sum(
+            item.get("usable_source_count", 0)
+            for item in question_diagnostics
+        ),
+        "extracted_findings": sum(
+            len(item.get("findings", []))
+            for item in evidence
+        ),
+        "rejected_findings": sum(
+            len(item.get("rejected_findings", []))
+            for item in question_diagnostics
+        ),
+        "rejected_sources": sum(
+            len(item.get("rejected_sources", []))
+            for item in question_diagnostics
+        ),
+        "errors": [
+            {
+                "question": item.get("question", ""),
+                "detail": (
+                    diagnostic.get("error")
+                    or diagnostic.get("status", "Extraction failure")
+                ),
+            }
+            for item, diagnostic in zip(evidence, question_diagnostics)
+            if (
+                diagnostic.get("error")
+                or diagnostic.get("status") in failure_statuses
+            )
+        ],
+        "by_question": [
+            {
+                "question": item.get("question", ""),
+                **item.get("diagnostics", {}),
+            }
+            for item in evidence
+        ],
+    }
+
     print(
-        f"Evidence groups created: {len(evidence)}"
+        f"Research questions: {len(questions)}; "
+        f"sources retrieved: {len(sources)}; "
+        f"usable source-question pairs: "
+        f"{extraction_diagnostics['usable_sources_by_question']}; "
+        f"findings extracted: "
+        f"{extraction_diagnostics['extracted_findings']}; "
+        f"findings rejected: "
+        f"{extraction_diagnostics['rejected_findings']}; "
+        f"statuses: {extraction_status_counts}"
     )
 
     return {
         "evidence": evidence,
+        "pipeline_diagnostics": {
+            **state.get("pipeline_diagnostics", {}),
+            "extraction": extraction_diagnostics,
+        },
         "extracted_finding_count": sum(
             len(item.get("findings", [])) for item in evidence
         ),
+        "extraction_status": extraction_status,
     }
 
 
@@ -160,6 +252,15 @@ def evidence_cleaner_node(state: ResearchState):
     return {
         "cleaned_evidence": cleaned_evidence,
         "cleaner_dropped_count": len(rejected_findings),
+        "pipeline_diagnostics": {
+            **state.get("pipeline_diagnostics", {}),
+            "evidence_cleaner": {
+                "input_findings": original_count,
+                "retained_findings": cleaned_count,
+                "rejected_findings": len(rejected_findings),
+                "rejections": rejected_findings,
+            },
+        },
     }
 
 
@@ -221,6 +322,60 @@ def citation_checker_node(state: ResearchState):
 
                 unsupported += 1
 
+    pipeline_diagnostics = state.get("pipeline_diagnostics", {})
+    extraction_errors = (
+        pipeline_diagnostics.get("extraction", {}).get("errors", [])
+    )
+    search_errors = (
+        pipeline_diagnostics.get("searcher", {}).get("errors", [])
+    )
+    verification_errors = [
+        {
+            "question": item.get("question", ""),
+            "claim": finding.get("claim", ""),
+            "detail": finding.get("verification_reason")
+            or finding.get("relevance_reason", ""),
+        }
+        for item in verified
+        for finding in item.get("findings", [])
+        if finding.get("verification_reason")
+        or "model service is unavailable"
+        in str(finding.get("relevance_reason", "")).lower()
+    ]
+    rejected_claims = [
+        {
+            "question": item.get("question", ""),
+            "claim": finding.get("claim", ""),
+            "status": finding.get("status", ""),
+            "relevance_status": finding.get("relevance_status", ""),
+            "reason": (
+                finding.get("verification_reason")
+                or finding.get("relevance_reason")
+                or "The claim was not verified as supported."
+            ),
+        }
+        for item in verified
+        for finding in item.get("findings", [])
+        if (
+            finding.get("status") == "UNSUPPORTED"
+            or finding.get("relevance_status") in {
+                "PARTIALLY_RELEVANT",
+                "IRRELEVANT",
+            }
+        )
+    ]
+    has_errors = bool(extraction_errors or search_errors or verification_errors)
+    if topic_relevant and not has_errors:
+        run_status = "COMPLETED"
+    elif extraction_errors and not topic_relevant:
+        run_status = "FAILED"
+    elif search_errors and not topic_relevant:
+        run_status = "FAILED"
+    elif verification_errors and not topic_relevant:
+        run_status = "FAILED"
+    else:
+        run_status = "INCOMPLETE"
+
     print(
         f"Supported: {supported}"
     )
@@ -235,8 +390,19 @@ def citation_checker_node(state: ResearchState):
 
     return {
         "verified_evidence": verified,
-        "run_status": "COMPLETED" if topic_relevant else "INCOMPLETE",
+        "run_status": run_status,
         "irrelevant_finding_count": irrelevant,
+        "pipeline_diagnostics": {
+            **state.get("pipeline_diagnostics", {}),
+            "citation_checker": {
+                "supported_claims": supported,
+                "partially_supported_claims": partial,
+                "unsupported_claims": unsupported,
+                "irrelevant_claims": irrelevant,
+                "errors": verification_errors,
+                "rejected_claims": rejected_claims,
+            },
+        },
     }
 
 
@@ -264,45 +430,68 @@ def writer_node(state: ResearchState):
 
     report = generate_report(
         topic,
-        verified_evidence
+        verified_evidence,
+        state.get("run_status", "INCOMPLETE"),
+        state.get("pipeline_diagnostics", {}),
     )
 
-    # --------------------------------------------------------
-    # Save Markdown
-    # --------------------------------------------------------
-
-    markdown_file = save_markdown(
-        topic,
-        report
+    quality = evaluate_research_quality(
+        topic=topic,
+        questions=state.get("research_questions", []),
+        verified_evidence=verified_evidence,
+        report=report,
+        run_status=state.get("run_status", "INCOMPLETE"),
+        pipeline_diagnostics=state.get("pipeline_diagnostics", {}),
+    )
+    quality_lines = []
+    for name, metric in quality["metrics"].items():
+        score = (
+            f"{metric['score']}/10"
+            if metric["score"] is not None
+            else "NOT_EVALUATED"
+        )
+        quality_lines.append(
+            f"- **{name.replace('_', ' ').title()}:** {score} "
+            f"(weight {metric['weight'] * 100:.0f}%). "
+            f"{metric['criterion']}"
+        )
+    report += (
+        "\n## Research Quality Evaluation\n\n"
+        f"**Weighted score:** {quality['score_out_of_10']}/10 "
+        f"(**{quality['status']}**; passing threshold: 9/10, "
+        f"independently verified findings required: "
+        f"{'yes' if quality['passing'] else 'no'}).\n\n"
+        + "\n".join(quality_lines)
+        + "\n\n**Limitations:** "
+        + " ".join(quality["limitations"])
     )
 
-    # --------------------------------------------------------
-    # Save PDF
-    # --------------------------------------------------------
+    markdown_file = save_markdown(topic, report)
+    pdf_file = save_pdf(topic, report)
 
-    pdf_file = save_pdf(
-        topic,
-        report
-    )
-
-    print(
-        "\n=== Report Generated ==="
-    )
-
-    print(
-        "Markdown:",
-        markdown_file
-    )
-
-    print(
-        "PDF:",
-        pdf_file
-    )
+    print("\n=== Report Generated ===")
+    print("Markdown:", markdown_file)
+    print("PDF:", pdf_file)
 
     return {
         "report": report,
         "markdown_file": markdown_file,
-        "pdf_file": pdf_file
+        "pdf_file": pdf_file,
+        "research_quality": quality,
+        "execution_status": "COMPLETED",
+        "evidence_status": (
+            "VERIFIED_EVIDENCE_FOUND"
+            if any(
+                finding.get("relevance_status") == "RELEVANT"
+                and finding.get("status") in {
+                    "SUPPORTED",
+                    "PARTIALLY_SUPPORTED",
+                }
+                for group in verified_evidence
+                for finding in group.get("findings", [])
+            )
+            else "NO_VERIFIED_EVIDENCE"
+        ),
     }
 
 

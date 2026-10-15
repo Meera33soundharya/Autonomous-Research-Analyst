@@ -1,18 +1,37 @@
-﻿from app.services.search_service import search_web
+from concurrent.futures import ThreadPoolExecutor
+
+from app.services.search_service import search_web
 from app.services.query_expander import expand_search_queries
 
 
-def run_search(
+def _search_query(query: str) -> tuple[list[dict], list[dict]]:
+    errors = []
+    results = search_web(
+        query,
+        max_results=3,
+        diagnostics=errors,
+    )
+    return results, errors
+
+
+def run_search_with_diagnostics(
     topic: str,
     questions: list[str]
-) -> list[dict]:
+) -> tuple[list[dict], dict]:
 
     all_results = []
-    seen_urls = set()
+    source_indices = {}
+    query_cache = {}
+    diagnostics = {
+        "search_query_count": 0,
+        "errors": [],
+        "by_question": [],
+    }
 
     query_map = expand_search_queries(
         topic,
-        questions
+        questions,
+        diagnostics["errors"],
     )
 
     for question in questions:
@@ -25,20 +44,45 @@ def run_search(
             ]
         )
 
+        question_queries = []
         print(
             f"\n[Searcher] Question: {question}"
         )
 
+        seen_question_queries = set()
         for query in queries:
+            query = str(query).strip()
+            normalized_query = query.casefold()
+            if not query or normalized_query in seen_question_queries:
+                continue
+            seen_question_queries.add(normalized_query)
+            question_queries.append(query)
+            print(f"\n[Searcher] Query: {query}")
 
-            print(
-                f"[Searcher] Query: {query}"
-            )
+        missing_queries = [
+            query for query in question_queries if query not in query_cache
+        ]
+        if missing_queries:
+            with ThreadPoolExecutor(
+                max_workers=min(2, len(missing_queries))
+            ) as executor:
+                search_results = executor.map(_search_query, missing_queries)
+                for query, (results, search_errors) in zip(
+                    missing_queries,
+                    search_results,
+                ):
+                    query_cache[query] = results
+                    diagnostics["errors"].extend(
+                        {
+                            "question": question,
+                            "query": query,
+                            **error,
+                        }
+                        for error in search_errors
+                    )
 
-            results = search_web(
-                query,
-                max_results=3
-            )
+        for query in question_queries:
+            results = query_cache[query]
 
             for result in results:
 
@@ -60,14 +104,18 @@ def run_search(
                 if not key:
                     continue
 
-                if key in seen_urls:
+                if key in source_indices:
+                    existing = all_results[source_indices[key]]
+                    if question not in existing["questions"]:
+                        existing["questions"].append(question)
                     continue
 
-                seen_urls.add(key)
+                source_indices[key] = len(all_results)
 
                 all_results.append(
                     {
                         "question": question,
+                        "questions": [question],
                         "search_query": query,
                         "title": title,
                         "url": url,
@@ -106,16 +154,37 @@ def run_search(
                         "source_quality": result.get(
                             "source_quality",
                             0
-                        )
+                        ),
+                        "source_identifier": (
+                            result.get("doi")
+                            or result.get("url")
+                            or title
+                        ),
                     }
                 )
+
+        diagnostics["search_query_count"] += len(question_queries)
+        diagnostics["by_question"].append({
+            "question": question,
+            "search_queries": question_queries,
+            "source_count": sum(
+                question in source["questions"]
+                for source in all_results
+            ),
+        })
 
     print(
         f"\n[Searcher] Total unique sources: "
         f"{len(all_results)}"
     )
 
-    return all_results
+    diagnostics["unique_source_count"] = len(all_results)
+    return all_results, diagnostics
 
 
-
+def run_search(
+    topic: str,
+    questions: list[str]
+) -> list[dict]:
+    results, _ = run_search_with_diagnostics(topic, questions)
+    return results

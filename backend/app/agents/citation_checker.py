@@ -1,8 +1,13 @@
+import logging
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import urlparse
 
 from app.services.llm_service import ask_llm
+
+logger = logging.getLogger(__name__)
 
 
 VALID_STATUSES = {
@@ -16,6 +21,8 @@ VALID_RELEVANCE_STATUSES = {
     "PARTIALLY_RELEVANT",
     "IRRELEVANT",
 }
+
+MAX_VERIFICATION_WORKERS = 2
 
 
 def _extract_status(response: str) -> str:
@@ -51,8 +58,11 @@ def _check_relevance(
 
     prompt = f"""
 You are a strict research-topic relevance evaluator.
-Decide whether the claim directly answers the research topic or its scope.
-Citation support alone does not make an unrelated claim relevant.
+Decide whether the claim directly answers the stated research question and
+materially informs the research topic or its scope. The topic may describe a
+combined application with distinct components, so a source need not describe
+the entire integrated system if it provides evidence about the component
+asked about. A shared keyword alone is not enough.
 
 RESEARCH TOPIC:
 {topic}
@@ -66,6 +76,12 @@ CLAIM:
 SOURCE CONTEXT:
 {source_content[:6000]}
 
+For example, generic evidence about a voice assistant is not relevant unless it
+informs the voice-based complaint-registration question. Evidence about a
+government workflow is not relevant unless it informs the stated grievance or
+field-assignment question. Do not infer that independently studied components
+have already been integrated into one deployed system.
+
 Return one line in this exact form:
 RELEVANT | reason
 PARTIALLY_RELEVANT | reason
@@ -75,17 +91,60 @@ Use RELEVANT only when the claim directly concerns the topic. Use
 PARTIALLY_RELEVANT when only a material part does. Do not use outside knowledge.
 """
     try:
-        return _extract_relevance(ask_llm(prompt))
-    except Exception:
-        return "IRRELEVANT", "Relevance evaluation failed."
+        response = ask_llm(prompt)
+        if "model service is unavailable" in response.lower():
+            return "IRRELEVANT", response.strip()
+        return _extract_relevance(response)
+    except Exception as error:
+        logger.exception("Relevance evaluation failed for claim %r", claim)
+        return (
+            "IRRELEVANT",
+            f"Relevance evaluation failed ({type(error).__name__}: {error}).",
+        )
 
 
-def _verify_finding(finding: dict) -> str:
+def _verify_finding(finding: dict) -> tuple[str, str]:
     claim = str(finding.get("claim", "")).strip()
     source_content = str(finding.get("source_content", "")).strip()
+    source_url = str(finding.get("source_url", "")).strip()
+    supporting_passage = str(finding.get("supporting_passage", "")).strip()
 
-    if not claim or not source_content:
-        return "UNSUPPORTED"
+    if not claim or not source_content or not supporting_passage:
+        return (
+            "UNSUPPORTED",
+            "The claim, source content, or traceable supporting passage is missing.",
+        )
+
+    parsed_url = urlparse(source_url)
+    if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+        return "UNSUPPORTED", "The finding has no valid HTTP(S) source URL."
+
+    normalized_source = re.sub(r"\s+", " ", source_content)
+    normalized_passage = re.sub(r"\s+", " ", supporting_passage)
+    if normalized_passage not in normalized_source:
+        return (
+            "UNSUPPORTED",
+            "The supporting passage does not occur verbatim in the source content.",
+        )
+
+    claim_numbers = {
+        value.replace(",", "")
+        for value in re.findall(r"(?<![A-Za-z])\d[\d,]*(?:\.\d+)?%?", claim)
+    }
+    passage_numbers = {
+        value.replace(",", "")
+        for value in re.findall(
+            r"(?<![A-Za-z])\d[\d,]*(?:\.\d+)?%?",
+            supporting_passage,
+        )
+    }
+    if not claim_numbers.issubset(passage_numbers):
+        missing_numbers = sorted(claim_numbers - passage_numbers)
+        return (
+            "UNSUPPORTED",
+            "Numeric/date tokens in the claim are absent from the cited passage: "
+            + ", ".join(missing_numbers),
+        )
 
     prompt = f"""
 You are a strict citation verification agent.
@@ -95,8 +154,8 @@ Determine whether the CLAIM is supported by the SOURCE EVIDENCE.
 CLAIM:
 {claim}
 
-SOURCE EVIDENCE:
-{source_content[:12000]}
+VERBATIM SUPPORTING PASSAGE FROM THE CITED SOURCE:
+{supporting_passage[:4000]}
 
 Return exactly ONE of these labels:
 
@@ -105,74 +164,87 @@ PARTIALLY_SUPPORTED
 UNSUPPORTED
 
 Rules:
-- SUPPORTED = the source directly supports the main claim.
+- SUPPORTED = the quoted passage directly supports the complete claim,
+  including its population, conditions, names, dates, and numeric values.
 - PARTIALLY_SUPPORTED = the source supports only part of the claim.
 - UNSUPPORTED = the source does not provide sufficient support.
 - Do not use outside knowledge.
+- Do not treat a similar topic as support for the claim.
 - Do not rewrite the claim.
 - Do not output explanations.
 """
 
     try:
         response = ask_llm(prompt)
-        return _extract_status(response)
-    except Exception:
-        return "UNSUPPORTED"
+        if "model service is unavailable" in response.lower():
+            return "UNSUPPORTED", response.strip()
+        status = _extract_status(response)
+        if status == "UNSUPPORTED" and not response.strip():
+            return status, "The citation checker returned an empty response."
+        return status, ""
+    except Exception as error:
+        logger.exception("Citation verification failed for claim %r", claim)
+        return (
+            "UNSUPPORTED",
+            f"Citation verification failed ({type(error).__name__}: {error}).",
+        )
+
+
+def _verify_claim_task(task: tuple[int, str, dict, str]) -> tuple[int, dict]:
+    group_index, question, finding, topic = task
+    verified_finding = dict(finding)
+
+    if topic:
+        relevance, reason = _check_relevance(finding, topic, question)
+        verified_finding["relevance_status"] = relevance
+        verified_finding["relevance_reason"] = reason
+        if relevance != "RELEVANT":
+            verified_finding["status"] = "UNSUPPORTED"
+            return group_index, verified_finding
+
+    status, verification_error = _verify_finding(finding)
+    verified_finding["status"] = status
+    if verification_error:
+        verified_finding["verification_reason"] = verification_error
+    return group_index, verified_finding
 
 
 def check_citations(evidence: list[dict], topic: str = "") -> list[dict]:
-    verified = []
+    verified = [
+        {
+            "question": group.get("question", ""),
+            "findings": [],
+        }
+        for group in evidence
+    ]
+    tasks = [
+        (group_index, group.get("question", ""), finding, topic)
+        for group_index, group in enumerate(evidence)
+        for finding in group.get("findings", [])
+    ]
+    if tasks:
+        with ThreadPoolExecutor(
+            max_workers=min(MAX_VERIFICATION_WORKERS, len(tasks))
+        ) as executor:
+            results = executor.map(_verify_claim_task, tasks)
+            for group_index, finding in results:
+                verified[group_index]["findings"].append(finding)
 
-    supported = 0
-    partial = 0
-    unsupported = 0
-
-    for group in evidence:
-
-        question = group.get("question", "")
-        original_findings = group.get("findings", [])
-
-        verified_findings = []
-
-        for finding in original_findings:
-
-            # IMPORTANT:
-            # Start with the ORIGINAL finding so that
-            # source_title, source_url, source_content,
-            # source_quality, source_number, etc. are preserved.
-            verified_finding = dict(finding)
-
-            if topic:
-                relevance, reason = _check_relevance(finding, topic, question)
-                verified_finding["relevance_status"] = relevance
-                verified_finding["relevance_reason"] = reason
-                if relevance != "RELEVANT":
-                    verified_finding["status"] = "UNSUPPORTED"
-                    unsupported += 1
-                    verified_findings.append(verified_finding)
-                    continue
-
-            status = _verify_finding(finding)
-
-            verified_finding["status"] = status
-
-            if status == "SUPPORTED":
-                supported += 1
-
-            elif status == "PARTIALLY_SUPPORTED":
-                partial += 1
-
-            else:
-                unsupported += 1
-
-            verified_findings.append(verified_finding)
-
-        verified.append(
-            {
-                "question": question,
-                "findings": verified_findings,
-            }
-        )
+    supported = sum(
+        finding.get("status") == "SUPPORTED"
+        for group in verified
+        for finding in group["findings"]
+    )
+    partial = sum(
+        finding.get("status") == "PARTIALLY_SUPPORTED"
+        for group in verified
+        for finding in group["findings"]
+    )
+    unsupported = sum(
+        finding.get("status") == "UNSUPPORTED"
+        for group in verified
+        for finding in group["findings"]
+    )
 
     print("\n=== Citation Checker ===")
     print(f"Supported: {supported}")
